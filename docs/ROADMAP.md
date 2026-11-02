@@ -1,0 +1,262 @@
+# LeadIntel consolidated roadmap (v0.3)
+
+Status: **proposal for review, 2026-11-02.** No Phase 1 code has been written. This merges three sets of requirements into one roadmap:
+- the original brief (v0.1);
+- the free-first architecture (v0.2, [PLAN.md](PLAN.md));
+- the network layer in PR [fy1fu/leadintel#1](https://github.com/fy1fu/leadintel/pull/1), not yet merged;
+- the v0.3 high-intent acquisition requirements.
+
+Companion documents:
+- [SCORING.md](SCORING.md): presence classification, keyword scoring, WQS / BOS / LPS.
+- [DATA_MODEL.md](DATA_MODEL.md): consolidated schema.
+- [SUNBIZ.md](SUNBIZ.md): verified Sunbiz formats.
+- [NETWORK.md](NETWORK.md): network layer.
+- [VERIFICATION.md](VERIFICATION.md): open verification items.
+
+Status legend:
+
+| Tag | Meaning |
+|---|---|
+| ✅ **Implemented** | Code and tests exist in PR #1 (not merged yet) |
+| 📋 **Planned** | Designed in v0.1/v0.2, not implemented |
+| 🆕 **New** | Required by v0.3; not in any earlier design |
+| 🔭 **Optional** | Future enhancement; not on the critical path |
+
+Where a v0.3 requirement *extends* a planned component, it is listed as 📋 + 🆕 with the delta spelled out. Nothing already designed is redesigned unless a v0.3 requirement or new evidence forces it; those cases are called out in §3.
+
+---
+
+## 1. Requirement-by-requirement classification
+
+### 1.1 Sunbiz and fictitious-name (DBA) discovery — v0.3 §1
+
+| Requirement | Status | Existing basis | Work remaining |
+|---|---|---|---|
+| Verified official layouts before parsing | ✅ (research) | `SUNBIZ.md` §4: corporate 1,440 B, fictitious name 2,098 B, both event files validated on real records | Close V1 (official corporate positions). The parser must re-validate every record. |
+| Access path, credentials handling | ✅ | `sunbiz_https` probe; credentials only from env, leak-tested | — |
+| Import daily corporate filings | 📋 | `PLAN.md` §3; `SUNBIZ.md` §5 | Build the adapter |
+| Import daily fictitious-name filings | 📋 | Same | Build the adapter |
+| Import event files (status changes, name changes, dissolutions) | 🆕 | Layouts validated | Needed for the "inactive" negative signal |
+| Preserve filing date and entity type | 📋 + 🆕 | `organization` table (v0.1) | Add `filing_kind` (corporation / LLC / LP / non-profit / foreign / fictitious name / general partnership) mapped from filing-type codes (`FLAL`, `DOMP`, `FORL`, `DOMNP`, …), keeping the raw code |
+| Address roles: principal / mailing / registered agent / owner | 🆕 | — | Typed `address` rows with a role. **The registered-agent address is never used as the operating location.** |
+| County from the right address | 🆕 | — | Principal address → geocode (Census) → county FIPS. Fallbacks: ZIP→county (Census relationship file); the DBA `county` field only when it isn't `MULTIPLE`. **Principal-address state is blank in all daily corporate records** (`SUNBIZ.md`), so state comes from the ZIP. Every derivation is recorded with its method. |
+| Registered-agent / mass-filer address detection | 📋 + 🆕 | v0.2 noise filter | Flag principal = RA address, and addresses shared by more than N filings, as `not_operating_location` |
+| DBA ↔ owning entity link | 🆕 | `SUNBIZ.md`: all 706 sampled company owners carry a Sunbiz document number in `own_charter` | Exact join on document number. Person owners are kept as relationships without exposing personal data. |
+| No double counting (LLC + DBA + map listing = one business) | 📋 | v0.2 §4 organization / location split + entity resolution | Add the DBA→entity edge and DBA name as alias in matching |
+| Source records preserved and traceable | 📋 | `source_record` + `fact` provenance (v0.1/v0.2) | Raw fixed-width line stored with file name, line number and SHA-256 |
+| Tolerate malformed records, encoding issues, partial downloads | 📋 + 🆕 | `SUNBIZ.md` §5 integrity rules; downloader primitives ✅ | Per-record quarantine table, byte-slice + per-field UTF-8 decode, NUL stripping, date ledger. No crash, no silent drop: quarantine counts appear in coverage. |
+| DBA weighted above ordinary LLC | 🆕 | — | `entity_type_weights` in `scoring.yaml` (SCORING.md §3) |
+
+### 1.2 Keyword filtering and scoring — v0.3 §2
+
+| Requirement | Status | Basis / delta |
+|---|---|---|
+| Holding / SPV name down-ranking | 📋 | v0.2 §3 noise filter (regex idea) |
+| Configurable positive/negative keyword groups, editable without code | 🆕 | `config/keywords.yaml`, versioned (SCORING.md §2) |
+| Word-boundary, phrase-aware matching (`pressure wash` ≠ `prewash`; `HVAC` case-insensitive; `detail` as a word) | 🆕 | Token-based matcher with stemming variants (`wash`/`washing`); tests for false positives |
+| Penalties, not automatic exclusion; record which keywords fired | 🆕 | A `keyword_hit` row per match, shown in the lead profile |
+| User-configurable exclusions | 🆕 | `hard_exclude` list, separate from penalties, with an exclusion reason stored |
+
+### 1.3 Established businesses without an independent website — v0.3 §3
+
+| Requirement | Status | Basis / delta |
+|---|---|---|
+| Don't make new registrations the primary source | 📋 | v0.2 §3: Overture/OSM/DBPR are primary for operating businesses |
+| Website classification (no website / inaccessible / uncertain / incomplete) | 📋 | v0.1 §4 + v0.2 §5 |
+| Facebook-only, Instagram-only, social-only, directory-only presence | 📋 + 🆕 | v0.2 had a single "social-only" flag. v0.3 needs a separate **presence type** axis (SCORING.md §1). |
+| "Reasonably good" vs "outdated" website | 📋 | WQS bands (v0.1) mapped to presence categories |
+| Free evidence that a business is established | 🆕 | Overture multi-source confirmation and open status, DBPR licence original-issue date, BTR, Sunbiz formation date, Wayback first-seen, social profile presence. **Verified 2026-11-02:** Overture lists social-only or no-web/no-social businesses in every target niche, nearly all with phones (SCORING.md §1.3). |
+| Listing with reviews, review count and rating | 🆕 + 🔭 | **Not available from any free source we use**; Overture has no review fields (verified). Options: (a) **manual research fields**: the user records review count and rating from a listing they viewed, stored with `provenance = user` and a date; (b) Google Places adapter (paid, optional, §1.11). Scraping Google or Yelp is excluded (terms of service). |
+
+### 1.4 Scoring model — v0.3 §4
+
+| Requirement | Status | Basis / delta |
+|---|---|---|
+| Separate WQS / BOS / LPS | 📋 | v0.1 §6.5 / §7, restored in SCORING.md |
+| v0.3 positive and negative signals | 📋 + 🆕 | BOS components kept. New: online-presence signals, DBA / recent licence / BTR signals, service-area breadth, missing contact or quote paths, franchise detection, **operating-evidence gate** |
+| "No website" alone never yields a high score | 🆕 | Operating-evidence gate caps BOS without evidence (SCORING.md §4.3) |
+| Invariant: new LLC without evidence < established business with 40 reviews and no website | 🆕 | Encoded as an automated scoring test (SCORING.md §7) |
+| Every factor visible in the lead profile | 📋 + 🆕 | v0.1 explanation panel → itemized factor ledger with evidence links |
+
+### 1.5 Industry and niche targeting — v0.3 §5
+
+| Requirement | Status | Basis / delta |
+|---|---|---|
+| Industry profiles for *website benchmarking* (archetypes, required/expected features, rubric anchors) | 📋 | v0.1 §6.3 |
+| Industry profiles for *targeting* (enable/disable, priority, keywords, geography) | 🆕 | **Merged into the same profile file**: one `config/industries/*.yaml` per niche with `targeting:`, `keywords:`, `benchmark:` sections. Not a second system. |
+| Initial niches (home services, mobile/automotive, marine/coastal) | 🆕 | Seed profiles with taxonomy mappings to Overture categories, OSM tags, DBPR licence types and BTR occupation codes |
+| Compare lead quality by industry; industries with most no-website businesses; highest average BOS | 📋 + 🆕 | v0.2 coverage dashboard has industry coverage. Add opportunity aggregates per industry. |
+| Track replies and sales by industry; learn conversion rates | 🆕 | Depends on CRM (§1.9) and analytics (§1.10) |
+
+### 1.6 First-campaign workflow — v0.3 §6
+
+| Requirement | Status | Basis / delta |
+|---|---|---|
+| Lead lists, saving, CSV/XLSX export | 📋 | v0.1 §10 / v0.2 Phase 1 |
+| Campaign = niche + area + target size (20–30) + pipeline run + ranked shortlist | 🆕 | `campaign` entity and a guided workflow screen |
+| Campaign-ready export columns | 🆕 | Fixed export schema including reasons, competitor comparison, improvements, citations and timestamps. Missing contact data is exported as empty with a reason, never inferred. |
+
+### 1.7 Competitor-based opportunity analysis — v0.3 §7
+
+| Requirement | Status | Basis / delta |
+|---|---|---|
+| Comparable local peers per (profile, market), excluding national chains | 📋 | v0.1 §6.4 benchmark sets |
+| Feature gap: what competitors offer that the prospect lacks (quote form, service areas, gallery, reviews, CTAs, mobile) | 📋 + 🆕 | Peer feature matrix existed. Add a prospect-facing **gap table**. |
+| Competitors' presence when the prospect has no website | 🆕 | Peer presence distribution, e.g. "18 of 24 local pressure-washing businesses have their own site" |
+| No claims of specific revenue increases | 🆕 | Report wording rule plus a test: gap statements are factual comparisons only |
+
+### 1.8 v0.3 §8
+
+**Section 8 arrived redacted.** Nothing has been assumed for it. Phase 4 in the v0.3 priorities lists *website mockup generation*, which has no specification elsewhere; it is held as 🆕 **needs specification** (§2, Phase 4).
+
+### 1.9 Service packages, recurring revenue and CRM — v0.3 §9–10
+
+| Requirement | Status | Basis / delta |
+|---|---|---|
+| Basic lead statuses, notes, lists | 📋 | v0.1 lead management |
+| Full pipeline statuses (New lead … Do not contact), contact history, follow-ups, next action, proposal / expected / actual value, MRR, reason lost | 🆕 | Replaces the v0.1 status set; old values map to new ones (DATA_MODEL.md §5) |
+| Manually tracked channels: email, phone, in-person, mail | 🆕 | `contact_event` log; **no automated sending or calling** |
+| Outreach compliance safeguards | 🆕 | Do-not-contact list enforced everywhere; per-channel consent / basis notes; contact-frequency limits; warnings for phone/SMS outreach (federal TCPA, the Florida Telephone Solicitation Act and the National Do Not Call Registry) and email (CAN-SPAM). These are product safeguards, not legal advice. |
+| Configurable service packages (one-page site, hosting, maintenance, GBP setup, SEO …) and pricing | 🆕 | `package` / `package_item`; no hard-coded prices |
+| GBP setup requires owner authorization | 🆕 | A package item cannot be marked delivered without a recorded owner-authorization note |
+| Estimated cost, profit, MRR | 🆕 | Derived from packages and deals |
+
+### 1.10 Acquisition performance and outcome learning — v0.3 §11
+
+| Requirement | Status | Basis / delta |
+|---|---|---|
+| Funnel metrics (discovered → qualified → contacted → replied → meeting → proposal → won), revenue, MRR, average sale, time to close | 🆕 | Computed from CRM tables |
+| Conversion by industry, lead source, presence category | 🆕 | Needs attribution fields frozen at contact time (score snapshot) |
+| Outcome-based scoring improvement, inspectable and reversible | 📋 + 🆕 | Scores already store `config_version` (v0.1). New: proposed weight changes are generated as a diff with the evidence, **applied only after user approval**, one-click revert. Small-sample guard: no proposal below a minimum number of outcomes per segment. |
+
+### 1.11 Google Places (optional) — v0.3 §12
+
+| Requirement | Status | Basis / delta |
+|---|---|---|
+| Disabled paid adapter, blocked by cost guard | ✅ (guard) / 📋 (adapter) | `paid_providers` in `network.yaml`; `CostGuard` tested; adapter is a stub in the plan |
+| Field-level billing | ✅ (partly verified) | Google docs, checked 2026-11-02: `websiteUri`, `nationalPhoneNumber`, `rating`, `userRatingCount` are **Enterprise** fields; Text Search returns at most 60 results per query |
+| Pricing, storage/caching terms, map-display terms, full-area cost estimate, explicit budget + approval | 🔭 | Pre-enable checklist (§4); prices re-verified at that time, never assumed |
+
+### 1.12 Cross-cutting (unchanged requirements, current status)
+
+| Capability | Status |
+|---|---|
+| Network registry, staged diagnostics, required/optional classification | ✅ |
+| Overture three-mirror failover + bounding-box reader | ✅ (reader); 📋 normalizing adapter |
+| Partial-download recovery, MD5/size integrity, atomic install (OSM) | ✅ |
+| Paid-provider blocking | ✅ |
+| SSRF-safe crawling client | ✅ (client); 📋 crawler (robots.txt, page selection) |
+| Explicit incomplete-search / coverage states | ✅ in diagnostics and OSM planning; 📋 coverage records per discovery run |
+| Map (MapLibre + OpenFreeMap), area search, dashboard | 📋 |
+| DBPR, Duval BTR, NPI adapters | 📋 (endpoints verified; Duval report portal behind a bot challenge) |
+| Local AI provider (Ollama) / `none` provider | 📋 |
+| Coverage dashboard | 📋 |
+
+---
+
+## 2. Revised phases
+
+The v0.3 priority order is adopted. Each phase ends with real-data acceptance tests and a short report. Items carried over from v0.2 phases are marked (v0.2).
+
+### Phase 1 — Discovery and qualification
+1. **Foundation** (v0.2):
+   - Postgres + PostGIS + Alembic. The PR #1 `net_*` tables move into the first migration.
+   - TIGER boundaries; area resolver.
+   - `SourceAdapter` interface with coverage records; provenance `fact` model; cost guard wiring.
+2. **Sunbiz adapter** (corporate + fictitious name + both event files):
+   - date ledger and validating parser with quarantine;
+   - filing-kind mapping and address roles;
+   - registered-agent / mass-filer detection;
+   - DBA → entity linking.
+3. **Overture adapter**: normalize (empty-string websites, phone E.164, social URL classification) on top of the ✅ reader.
+4. **DBPR adapter** (licence CSVs); **Duval BTR**: Tax Collector data where obtainable, otherwise manual CSV import (the portal challenge is never bypassed).
+5. **Entity resolution v1**: organization / location / alias, DBA edges, review queue.
+6. **Keyword engine + industry targeting v1**: `keywords.yaml`, `industries/*.yaml` with the initial niches.
+7. **County filtering, CSV export, minimal map + list UI** (v0.2), so results are inspectable.
+
+**Acceptance criteria:**
+- Duval + St. Johns imports reproduce every source line from the database.
+- A rerun creates 0 duplicates.
+- A DBA owned by an LLC shows as one business with both filings.
+- Registered-agent addresses never appear as operating locations.
+- A day with a missing file shows coverage `partial`, never "no new businesses".
+- Malformed lines land in quarantine.
+- 0 paid calls.
+
+### Phase 2 — Website and online-presence research
+- Website candidate gathering and association confidence (v0.2 §5).
+- **Presence classification** (two axes, SCORING.md §1): Facebook / Instagram / social / directory-only.
+- Polite crawler on the ✅ safe-egress client: robots.txt, page selection, Lighthouse, axe.
+- WQS with the `none` provider (v0.2).
+- **Manual research fields** for listing / review data with provenance.
+- Website discovery confidence and the "investigation incomplete" state.
+
+**Acceptance:** association precision ≥ 0.97 on a labelled sample; no Facebook URL ever counted as an independent website; fixture sites A/B/B′/C scored as specified.
+
+### Phase 3 — Scoring and competitor analysis
+- Industry benchmark profiles (v0.1).
+- Peer selection and the gap table.
+- BOS / LPS with the factor ledger and operating-evidence gate.
+- Optional local AI (Ollama) for subjective criteria, behind calibration.
+
+**Acceptance:** scoring invariants (SCORING.md §7) pass; repeat scoring is identical for unchanged inputs; every score displays its factors and evidence.
+
+### Phase 4 — Sales workflow
+- Campaigns and the first-campaign wizard (niche + area → 20–30 shortlist).
+- Campaign-ready export.
+- CRM pipeline, contact log, follow-ups, do-not-contact enforcement.
+- **Website mockups — needs specification** (see §1.8). Free-first default would be static templates filled from verified public data, clearly marked as concept mockups.
+
+### Phase 5 — Business performance
+- Service packages and deals.
+- Revenue / MRR reporting.
+- Funnel and conversion analytics.
+- Outcome-based weight proposals (approve / revert).
+
+### Later / optional (🔭)
+- Google Places adapter (after the §4 checklist).
+- Foursquare OS Places.
+- Additional counties and states.
+- Self-hosted PMTiles.
+- Learning-to-rank once enough outcomes exist.
+
+---
+
+## 3. Design changes forced by v0.3 or by new evidence
+
+| Change | Why |
+|---|---|
+| Industry targeting and website-benchmark profiles become **one** profile file per niche | Avoids two parallel industry systems |
+| Website status and **presence type** become two separate axes (replacing the single social-only flag) | v0.3 needs Facebook-only vs Instagram-only vs directory-only, independent of website quality |
+| v0.1 lead statuses are replaced by the v0.3 CRM pipeline | Superset; mapping in DATA_MODEL.md §5 |
+| Chain detection no longer treats Overture `brand` presence as a chain signal | Verified: `brand` is present on 24,927 of 51,352 sampled places, but empty-named on 20,503; only 600 carry a Wikidata brand ID. Use Wikidata ID, recurring brand names and multi-location counts instead. |
+| Reviews treated as unavailable by default | No free source we use provides them (verified); manual entry or the paid adapter only |
+| BOS gains an **operating-evidence gate** | v0.3: "no website" must not produce a high score on its own |
+| Corporate location from principal address + ZIP, not the state field | Principal state is blank in all daily records checked |
+
+---
+
+## 4. Google Places pre-enable checklist (🔭)
+
+All steps must be completed and recorded before `allow_paid` can be set for `google_places`:
+
+1. Re-verify current SKU prices and free-usage caps on Google's own pricing page (never assume a free allowance).
+2. Re-verify field → SKU mapping. As of 2026-11-02, `websiteUri`, `nationalPhoneNumber`, `rating` and `userRatingCount` are Enterprise.
+3. Re-verify storage and caching terms (which fields may be stored and for how long; `place_id` persistence).
+4. Re-verify display terms (Google map requirement) and decide the map mode.
+5. Run the **cost estimator**: tiles × categories × pages for the chosen area, both worst-case and expected.
+6. Set a monthly budget; the cost guard hard-stops at the budget.
+7. Record explicit user approval (who, when, amount) in the cost ledger.
+
+---
+
+## 5. Decisions needed before Phase 1
+
+| # | Decision | Recommendation |
+|---|---|---|
+| D1 | Phase 1 counties | Duval + St. Johns (others later, per county BTR availability) |
+| D2 | First niche for the campaign workflow | Pressure washing or lawn/landscaping. Pressure washing is small in central-Jacksonville Overture data (32 open), so cleaning or landscaping gives a larger pool. Compare after Phase 1 import. |
+| D3 | Manual review-count entry | Yes. It's the only free, terms-compliant way to use review evidence. |
+| D4 | Merge PR #1 before Phase 1 | Yes. This roadmap builds on it. |
+| D5 | Section 8 (redacted) and mockup requirements | Please resend or specify |
+| D6 | Outreach channels to support first | Manual phone and email logging + physical mail; no automation |
