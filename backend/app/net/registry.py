@@ -28,6 +28,11 @@ class ProbeSpec(BaseModel):
     min_bytes: int = 1
     timeout_s: float | None = None
     needs_env: list[str] = Field(default_factory=list)
+    method: Literal["GET", "PROPFIND", "HEAD", "OPTIONS"] = "GET"
+    headers: dict[str, str] = Field(default_factory=dict)
+    # Names of the env vars holding username and password for HTTP Basic auth. Values are never
+    # stored in config, results, logs or reports.
+    basic_auth_env: list[str] = Field(default_factory=list, max_length=2)
 
 
 class Service(BaseModel):

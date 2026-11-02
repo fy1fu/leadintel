@@ -183,3 +183,66 @@ def test_network_allowed_refers_to_the_service_host_not_redirect_targets(tmp_pat
     finally:
         srv.close()
         proxy.close()
+
+
+def _webdav_route(h):
+    import base64
+    if h.headers.get("Authorization") != "Basic " + base64.b64encode(b"Public:s3cr3t-value").decode():
+        return 401, {"WWW-Authenticate": 'Basic realm="VShell"'}, b"<VanDyke-VShell><Title>Authorization Required</Title></VanDyke-VShell>"
+    if h.command != "PROPFIND" or h.headers.get("Depth") != "1":
+        return 405, {}, b""
+    return 207, {"Content-Type": "text/xml"}, b"<D:multistatus><D:href>/Public/doc/fic/</D:href></D:multistatus>"
+
+
+def _webdav_svc(port):
+    return svc("dav", port, [
+        {"key": "challenge", "kind": "http", "url": f"http://127.0.0.1:{port}/", "expect_status": [401], "expect_body_contains": "VShell"},
+        {"key": "list", "kind": "http", "method": "PROPFIND", "headers": {"Depth": "1"}, "url": f"http://127.0.0.1:{port}/Public/doc/",
+         "expect_status": [207], "expect_body_contains": "/Public/doc/fic/", "needs_env": ["T_USER", "T_PASS"],
+         "basic_auth_env": ["T_USER", "T_PASS"]}])
+
+
+def test_webdav_probe_authenticates_without_leaking_credentials(tmp_path, monkeypatch):
+    import json
+    srv = HTTPTestServer({"*": _webdav_route})
+    try:
+        monkeypatch.setenv("T_USER", "Public")
+        monkeypatch.setenv("T_PASS", "s3cr3t-value")
+        results = {r.probe_key: r for r in run(registry([_webdav_svc(srv.port)]), make_settings(tmp_path), "dav")}
+        assert results["challenge"].outcome == "success"
+        assert results["list"].outcome == "success", results["list"].error
+        dumped = json.dumps([r.to_dict() for r in results.values()])
+        assert "s3cr3t-value" not in dumped and "Basic " not in dumped and "UHVibGlj" not in dumped
+        assert any(st.detail.get("authenticated") for st in results["list"].stages)
+    finally:
+        srv.close()
+
+
+def test_webdav_probe_reports_rejected_credentials(tmp_path, monkeypatch):
+    srv = HTTPTestServer({"*": _webdav_route})
+    try:
+        monkeypatch.setenv("T_USER", "Public")
+        monkeypatch.setenv("T_PASS", "wrong-password")
+        r = {x.probe_key: x for x in run(registry([_webdav_svc(srv.port)]), make_settings(tmp_path), "dav")}["list"]
+        assert (r.failure_stage, r.failure_kind) == ("http", "authentication_failed")
+        assert "wrong-password" not in (r.error or "")
+    finally:
+        srv.close()
+
+
+def test_credentials_never_follow_a_redirect_to_another_host(tmp_path, monkeypatch):
+    target = HTTPTestServer({"*": ok(b"/Public/doc/fic/")})
+    origin = HTTPTestServer({"*": redirect(f"http://localhost:{target.port}/x")})
+    try:
+        monkeypatch.setenv("T_USER", "u")
+        monkeypatch.setenv("T_PASS", "p")
+        s1 = svc("o", origin.port, [{"key": "l", "kind": "http", "url": f"http://127.0.0.1:{origin.port}/",
+                                     "expect_status": [200], "basic_auth_env": ["T_USER", "T_PASS"]}])
+        s2 = svc("t", target.port, [{"key": "x", "kind": "http", "url": f"http://localhost:{target.port}/"}], host="localhost")
+        [r] = run(registry([s1, s2]), make_settings(tmp_path), "o")
+        assert r.outcome == "success", r.error
+        assert "Authorization" in origin.requests[0][1]
+        assert all("Authorization" not in hdrs for _, hdrs in target.requests)
+    finally:
+        target.close()
+        origin.close()

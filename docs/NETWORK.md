@@ -26,7 +26,7 @@ The "Sandbox result" column comes from a real request made on 2026-11-02. "Allow
 | Capability | Host(s), in failover order | Endpoint(s) probed | Sandbox result |
 |---|---|---|---|
 | Overture Places | `overturemaps-us-west-2.s3.us-west-2.amazonaws.com` → `overturemapswestus2.blob.core.windows.net` → `overturemapswestus2.dfs.core.windows.net` | Release listing + 4 KB range of a real places parquet (`PAR1` magic). Live test also read real places from each mirror individually and failed over when S3 was broken. | **All three operational** |
-| Sunbiz bulk | `sftp.floridados.gov:22` | SSH banner; SFTP listing when `SUNBIZ_SFTP_USER`/`SUNBIZ_SFTP_PASSWORD` are set | Tunnel allowed, **no SSH banner within 10 s**. Not operational from this sandbox. Expected to work from a normal internet connection; verify with `leadintel net-check --only sunbiz_sftp`. |
+| Sunbiz bulk | `sftp.floridados.gov:443` (HTTPS/WebDAV, primary) → `sftp.floridados.gov:22` (SFTP, fallback) | Unauthenticated `GET /` must return the VShell 401 challenge. Authenticated `PROPFIND /Public/doc/` uses `SUNBIZ_SFTP_USER`/`SUNBIZ_SFTP_PASSWORD`; it is skipped when they are unset. | **HTTPS operational** (authenticated listing succeeded). Port 22: tunnel allowed, connection reset before the SSH banner; unverified. See [SUNBIZ.md](SUNBIZ.md). |
 | Census geocoder | `geocoding.geo.census.gov` | Real geocode of 117 W Duval St | Operational |
 | Census files | `www2.census.gov` | 1 KB range of `TIGER2025/STATE/tl_2025_us_state.zip` (`PK` magic) | Operational |
 | OSM extracts | `download.geofabrik.de` → `download-ext2.geofabrik.de` | `florida-latest.osm.pbf.md5`; 2 KB of the PBF (`OSMHeader`) | Main: allowed, **reset during TLS handshake**. ext2: **proxy upstream 502** (the hostname may not exist; unverified). Capability unavailable here. |
@@ -62,7 +62,7 @@ RDAP is optional; domain age is a weak signal, and Wayback/Common Crawl are alte
 
 | Host | Reason |
 |---|---|
-| `dos.fl.gov`, `search.sunbiz.org` | Cloudflare challenge; bulk SFTP replaces them. Never scraped. |
+| `dos.fl.gov`, `search.sunbiz.org` | Documentation and per-entity search pages only. Bulk data comes from `sftp.floridados.gov` over HTTPS. Never scraped. |
 | `wiki.openstreetmap.org` | Documentation only |
 | `tigerweb.geo.census.gov` | TIGER/Line files on `www2.census.gov` suffice |
 | `api.census.gov` | Now redirects to a "missing key" page; County Business Patterns bulk files on `www2.census.gov` are used instead |
@@ -87,12 +87,13 @@ Each probe walks the connection stage by stage (`app/net/probe.py`), so errors l
 | `proxy` | `proxy_denied` (403/407: allowlist), `proxy_upstream_error` (5xx), `proxy_unreachable`, timeouts |
 | `tcp` | `connection_refused`, `tcp_timeout`, `network_unreachable` |
 | `tls` | `tls_certificate_invalid`, `tls_handshake_failed`, `connection_reset`, `connection_closed_during_tls` |
-| `http` | `http_status`, `bot_challenge`, `http_timeout`, `redirect_to_unregistered_host`, `too_many_redirects`, `protocol_error` |
+| `http` | `http_status`, `authentication_failed`, `bot_challenge`, `http_timeout`, `redirect_to_unregistered_host`, `too_many_redirects`, `protocol_error` |
 | `download` | `content_mismatch` (magic bytes / expected text), `short_download`, `download_interrupted` |
 | `ssh` | `ssh_banner_timeout`, `not_ssh`, `sftp_auth_failed`, `sftp_error` |
 
 Service status values:
 - `operational`: every probe passed.
+- `partially_verified`: every probe that ran passed, but some were skipped (for example, credentials not configured). Never shown as operational.
 - `degraded`: some probes passed.
 - `reachable_not_operational`: the network path was allowed but the service failed.
 - `blocked_by_network_policy`: the proxy refused the connection.
@@ -147,8 +148,23 @@ Capabilities roll up their mirrors:
 
 ```bash
 cd backend && .venv/bin/leadintel net-check            # probe everything enabled, print summary
-.venv/bin/leadintel net-check --only sunbiz_sftp      # one service
+.venv/bin/leadintel net-check --only sunbiz_https    # one service
 .venv/bin/leadintel net-check --markdown ../docs/network-diagnostics-local.md
 .venv/bin/uvicorn app.api.main:create_app --factory   # then open /diagnostics/network
 LEADINTEL_LIVE_TESTS=1 .venv/bin/python -m pytest -m live   # opt-in live tests
 ```
+
+## 7. Configuration and environment variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `LEADINTEL_CONFIG_DIR` | `<repo>/config` | Location of `network.yaml` |
+| `LEADINTEL_DATA_DIR` | `<repo>/data` (git-ignored) | Downloads, SQLite database |
+| `LEADINTEL_DATABASE_URL` | SQLite in the data dir | e.g. `postgresql+psycopg://…` |
+| `HTTPS_PROXY` / `NO_PROXY` | unset | Standard egress-proxy settings; honoured automatically |
+| `LEADINTEL_IGNORE_PROXY` | `false` | Ignore `HTTPS_PROXY` for diagnostics |
+| `LEADINTEL_CA_BUNDLE` (or `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE`) | system store | Extra CA bundle to trust in addition to the system store; verification is never disabled |
+| `SUNBIZ_SFTP_USER` / `SUNBIZ_SFTP_PASSWORD` | unset | Public Sunbiz login from the official page. Never committed or logged. |
+| `LEADINTEL_ENABLE_SERVICES` | empty | Comma-separated optional service keys to enable (e.g. `huggingface,ollama_local`) |
+| `LEADINTEL_ALLOW_PAID` + `LEADINTEL_PAID_PROVIDERS` | `false` / empty | **Both** are required before any paid provider can be contacted |
+| `LEADINTEL_LIVE_TESTS` | unset | `1` runs the opt-in live network tests |

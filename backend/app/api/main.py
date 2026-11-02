@@ -37,7 +37,7 @@ def create_app(ctx: NetContext | None = None) -> FastAPI:
 
 
 STATUS_CLASS = {
-    "operational": "ok", "operational_via_fallback": "warn", "degraded": "warn", "not_tested": "muted",
+    "operational": "ok", "operational_via_fallback": "warn", "degraded": "warn", "partially_verified": "warn", "not_tested": "muted",
     "disabled": "muted", "reachable_not_operational": "bad", "blocked_by_network_policy": "bad",
     "dns_failure": "bad", "unreachable_timeout": "bad", "unreachable": "bad", "unavailable": "bad",
     "blocked_by_policy": "muted",

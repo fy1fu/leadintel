@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime as dt
 import ipaddress
+import os
 import socket
 import ssl
 import struct
@@ -65,6 +66,7 @@ class HTTPTestServer:
                 self.end_headers()
                 self.wfile.write(body)
 
+        H.do_PROPFIND = H.do_GET  # WebDAV listing; routes inspect h.command / headers
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), H)
         if tls_context:
             self.httpd.socket = tls_context.wrap_socket(self.httpd.socket, server_side=True)
@@ -125,7 +127,8 @@ class RawServer:
 
 
 def reset_immediately(conn: socket.socket) -> None:
-    conn.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+    linger = struct.pack("HH", 1, 0) if os.name == "nt" else struct.pack("ii", 1, 0)  # Windows uses u_short
+    conn.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, linger)
     conn.recv(1)  # wait for the ClientHello so the reset happens mid-handshake
     conn.close()
 

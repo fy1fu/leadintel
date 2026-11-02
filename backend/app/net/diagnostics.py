@@ -4,6 +4,7 @@ Status vocabulary (never "works" without a successful real request):
 
   operational                - every probe succeeded
   degraded                   - some probes succeeded, some failed
+  partially_verified         - every probe that ran succeeded, but some were skipped (e.g. credentials missing)
   reachable_not_operational  - the network path was allowed (TCP/tunnel established) but the service failed
   blocked_by_network_policy  - the egress proxy refused the connection (allowlist or upstream refusal)
   dns_failure                - the hostname did not resolve (direct mode)
@@ -26,7 +27,7 @@ from app.net.registry import Registry, Service
 from app.net.store import NetStore, ProbeRow
 
 STATUS_RANK = {  # lower is healthier; used for mirror ordering and roll-ups
-    "operational": 0, "degraded": 1, "not_tested": 2, "reachable_not_operational": 3, "unreachable_timeout": 4,
+    "operational": 0, "partially_verified": 1, "degraded": 1, "not_tested": 2, "reachable_not_operational": 3, "unreachable_timeout": 4,
     "unreachable": 4, "dns_failure": 4, "blocked_by_network_policy": 5, "disabled": 6,
 }
 
@@ -70,7 +71,7 @@ class CapabilityReport:
     key: str
     description: str
     required: bool
-    status: str             # operational | operational_via_fallback | degraded | unavailable | not_tested | disabled
+    status: str             # operational | operational_via_fallback | partially_verified | degraded | unavailable | not_tested | disabled
     active_service: str | None
     critical: bool
     services: list[str]
@@ -89,7 +90,7 @@ def service_status(enabled: bool, rows: list[ProbeResult] | list[ProbeRow]) -> t
     elif any(r.failure_kind == "proxy_denied" for r in ran):
         allowed = False
     if len(ok) == len(ran):
-        return "operational", True
+        return ("partially_verified" if len(ran) < len(rows) else "operational"), True
     if ok:
         return "degraded", True
     if allowed:
@@ -171,8 +172,9 @@ class Diagnostics:
                 status = "disabled"
             elif active is not None:
                 status = "operational" if active is enabled[0] else "operational_via_fallback"
-            elif any(s.status == "degraded" for s in enabled):
-                status, active = "degraded", next(s for s in enabled if s.status == "degraded")
+            elif any(s.status in ("degraded", "partially_verified") for s in enabled):
+                active = next(s for s in enabled if s.status in ("degraded", "partially_verified"))
+                status = active.status
             elif all(s.status == "not_tested" for s in enabled):
                 status = "not_tested"
             else:

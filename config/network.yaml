@@ -68,19 +68,33 @@ services:
       - {key: parquet_range, kind: download, resolver: overture_sample_object, range_bytes: 4096, expect_magic: "PAR1"}
 
   # ---------------------------------------------------------------- Sunbiz
-  - key: sunbiz_sftp
+  # Verified 2026-11-02 against the official Data Downloads pages (dos.fl.gov) and the live server:
+  # the "SFTP" host is a VanDyke VShell server that also serves the same tree over HTTPS + WebDAV
+  # (HTTP Basic auth, realm "VShell"). HTTPS works through ordinary web egress; port 22 is a fallback.
+  # Credentials: the public login published on the Data Downloads page, supplied ONLY via
+  # SUNBIZ_SFTP_USER / SUNBIZ_SFTP_PASSWORD. Never commit them; they are never logged or reported.
+  - key: sunbiz_https
     capability: sunbiz_bulk
     priority: 1
     host: sftp.floridados.gov
+    port: 443
+    purpose: "Sunbiz bulk files over HTTPS/WebDAV (Data Access Portal): /Public/doc/{cor,fic,Quarterly}"
+    enabled: true
+    cost_class: free
+    probes:
+      - {key: portal_auth_challenge, kind: http, url: "https://sftp.floridados.gov/", expect_status: [401], expect_body_contains: "VShell", min_bytes: 1}
+      - {key: webdav_list_doc, kind: http, method: PROPFIND, headers: {Depth: "1"}, url: "https://sftp.floridados.gov/Public/doc/", expect_status: [207], expect_body_contains: "/Public/doc/fic/", needs_env: [SUNBIZ_SFTP_USER, SUNBIZ_SFTP_PASSWORD], basic_auth_env: [SUNBIZ_SFTP_USER, SUNBIZ_SFTP_PASSWORD]}
+  - key: sunbiz_sftp
+    capability: sunbiz_bulk
+    priority: 2
+    host: sftp.floridados.gov
     port: 22
-    purpose: "Sunbiz daily/quarterly corporate and fictitious-name files (SFTP)"
+    purpose: "Sunbiz bulk files over SFTP (fallback; needs outbound port 22)"
     enabled: true
     cost_class: free
     probes:
       - {key: ssh_banner, kind: ssh_banner}
-      # Directory listing requires the publicly documented Sunbiz SFTP credentials, supplied via
-      # SUNBIZ_SFTP_USER / SUNBIZ_SFTP_PASSWORD. Skipped (not failed) when they are not configured.
-      - {key: sftp_list, kind: sftp_list, path: "/", needs_env: [SUNBIZ_SFTP_USER, SUNBIZ_SFTP_PASSWORD]}
+      - {key: sftp_list, kind: sftp_list, path: "/Public/doc", needs_env: [SUNBIZ_SFTP_USER, SUNBIZ_SFTP_PASSWORD]}
 
   # ---------------------------------------------------------------- Census
   - key: census_geocoder
@@ -328,7 +342,7 @@ paid_providers:
 
 # Hosts that were considered or allowlisted earlier but are NOT needed by the application.
 not_required:
-  - {host: dos.fl.gov, reason: "Sunbiz web pages are behind a Cloudflare bot challenge; data comes from the SFTP bulk files instead. Never scraped."}
+  - {host: dos.fl.gov, reason: "Documentation only (Data Downloads pages). Bulk data comes from sftp.floridados.gov over HTTPS/WebDAV. Never scraped."}
   - {host: search.sunbiz.org, reason: "Per-entity web search; bulk SFTP files replace it. Do not scrape."}
   - {host: wiki.openstreetmap.org, reason: "Documentation only; not used at runtime."}
   - {host: tigerweb.geo.census.gov, reason: "TIGERweb REST is optional; boundaries are loaded from TIGER/Line files on www2.census.gov."}

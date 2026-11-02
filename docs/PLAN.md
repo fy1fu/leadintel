@@ -56,7 +56,7 @@ Legend:
 
 | Component | Default choice | Class | Notes / limits |
 |---|---|---|---|
-| **Discovery: registry** | Florida Sunbiz bulk files (daily + quarterly, corporations and fictitious names) | 🟢 | SFTP. Unreachable from this build sandbox, so the importer is built against fixtures here and runs for real on the host [secondary]. |
+| **Discovery: registry** | Florida Sunbiz bulk files (daily + quarterly, corporations and fictitious names) | 🟢 | Free public login. **Verified 2026-11-02**: served over HTTPS/WebDAV from `sftp.floridados.gov` (works from the sandbox), with SFTP on port 22 as a fallback. Formats and gap handling: [SUNBIZ.md](SUNBIZ.md). |
 | **Discovery: places** | Overture Maps Places (AWS/Azure open data) | 🟢 | [tested]. Monthly releases. No egress charge to us (AWS Open Data programme). |
 | Discovery: places | OpenStreetMap via Geofabrik extract (preferred) or Overpass | 🟢 / 🟡 | Free. The public Overpass instance is fair-use and rate-limited. Both were unreachable from this sandbox; they work from a normal internet connection. ODbL attribution. |
 | Discovery: places | Foursquare OS Places | 🟡 | Apache-2.0, but the Hugging Face copy is **gated** (free account + access form) [secondary]. Optional adapter, off until you opt in. |
@@ -345,7 +345,7 @@ docs/           PLAN.md  data-sources.md  scoring.md
 - Adapters:
   - **Overture** (real data)
   - **OSM** (Geofabrik/Overpass; fixtures here, real on the host)
-  - **Sunbiz** (daily + quarterly + fictitious names; fixtures here)
+  - **Sunbiz** (daily + quarterly + fictitious names over HTTPS/WebDAV, with the date ledger and integrity checks from [SUNBIZ.md](SUNBIZ.md))
   - **CSV import**
   - Base contracts for DBPR/BTR/NPI
 - Census geocoding.

@@ -247,12 +247,21 @@ class Prober:
         return res
 
     def fetch(self, url: str, res: ProbeResult, *, max_bytes: int = 1_048_576, range_bytes: int = 0,
-              timeout: float | None = None, follow_redirects: int = 3, expect_status: list[int] | None = None
-              ) -> tuple[int, dict[str, str], bytes]:
-        """Staged GET used by probes and resolvers. Raises ProbeFailure with stage attribution."""
+              timeout: float | None = None, follow_redirects: int = 3, expect_status: list[int] | None = None,
+              method: str = "GET", extra_headers: dict[str, str] | None = None,
+              secret_headers: dict[str, str] | None = None) -> tuple[int, dict[str, str], bytes]:
+        """Staged request used by probes and resolvers. Raises ProbeFailure with stage attribution.
+
+        `secret_headers` (e.g. Authorization) are sent only to the original host, never recorded in
+        stages/results, and dropped if a redirect leads to another host.
+        """
         expect_status = expect_status or [200, 206]
+        origin = urlsplit(url).hostname
         for _hop in range(follow_redirects + 1):
-            status, headers, body = self._request_once(url, res, max_bytes=max_bytes, range_bytes=range_bytes, timeout=timeout)
+            secrets = secret_headers if urlsplit(url).hostname == origin else None
+            status, headers, body = self._request_once(url, res, max_bytes=max_bytes, range_bytes=range_bytes,
+                                                       timeout=timeout, method=method, extra_headers=extra_headers,
+                                                       secret_headers=secrets)
             if status in expect_status:
                 return status, headers, body
             if 300 <= status < 400 and "location" in headers:
@@ -285,7 +294,8 @@ class Prober:
         return url
 
     def _request_once(self, url: str, res: ProbeResult, *, max_bytes: int, range_bytes: int,
-                      timeout: float | None) -> tuple[int, dict[str, str], bytes]:
+                      timeout: float | None, method: str = "GET", extra_headers: dict[str, str] | None = None,
+                      secret_headers: dict[str, str] | None = None) -> tuple[int, dict[str, str], bytes]:
         u = urlsplit(url)
         host = u.hostname or ""
         self.guard.check(host)  # paid hosts never reach the network
@@ -309,14 +319,18 @@ class Prober:
                     "issuer": dict(x[0] for x in cert.get("issuer", ()) if x).get("organizationName")}))
             sock.settimeout(timeout or self.settings.read_timeout_s)
             path = (u.path or "/") + (f"?{u.query}" if u.query else "")
-            hdrs = [f"GET {path} HTTP/1.1", f"Host: {u.netloc}", f"User-Agent: {self.registry.user_agent}",
+            hdrs = [f"{method} {path} HTTP/1.1", f"Host: {u.netloc}", f"User-Agent: {self.registry.user_agent}",
                     "Accept: */*", "Accept-Encoding: identity", "Connection: close"]
             if range_bytes > 0:
                 hdrs.append(f"Range: bytes=0-{range_bytes - 1}")
+            for k, v in {**(extra_headers or {}), **(secret_headers or {})}.items():
+                if "\r" in v or "\n" in v or "\r" in k or "\n" in k:
+                    raise ProbeFailure("config", "invalid_header", f"header {k} contains a line break")
+                hdrs.append(f"{k}: {v}")
             t0 = time.perf_counter()
             try:
                 sock.sendall(("\r\n".join(hdrs) + "\r\n\r\n").encode())
-                resp = http.client.HTTPResponse(sock, method="GET")
+                resp = http.client.HTTPResponse(sock, method=method)
                 resp.begin()
             except (OSError, http.client.HTTPException) as exc:
                 f = _classify_os_error("http", exc)
@@ -325,8 +339,10 @@ class Prober:
             status = resp.status
             headers = {k.lower(): v for k, v in resp.getheaders()}
             res.http_status = status
-            res.stages.append(Stage("http", "ok", _ms(t0), {"status": status, "content_type": headers.get("content-type"),
-                                                           "content_length": headers.get("content-length")}))
+            res.stages.append(Stage("http", "ok", _ms(t0), {"method": method, "status": status,
+                                                           "content_type": headers.get("content-type"),
+                                                           "content_length": headers.get("content-length"),
+                                                           "authenticated": bool(secret_headers)}))
             limit = range_bytes if range_bytes > 0 else max_bytes
             t0 = time.perf_counter()
             body = b""
@@ -353,8 +369,21 @@ class Prober:
     def _http_probe(self, service: Service, spec: ProbeSpec, url: str | None, res: ProbeResult) -> None:
         if not url:
             raise ProbeFailure("config", "missing_url", "probe has no URL")
-        status, headers, body = self.fetch(url, res, max_bytes=spec.max_bytes, range_bytes=spec.range_bytes,
-                                           timeout=spec.timeout_s, expect_status=spec.expect_status)
+        secrets = None
+        if spec.basic_auth_env:
+            import base64
+            user, pw = (os.environ.get(v, "") for v in spec.basic_auth_env)
+            secrets = {"Authorization": "Basic " + base64.b64encode(f"{user}:{pw}".encode()).decode()}
+        extra = dict(spec.headers)
+        try:
+            status, headers, body = self.fetch(url, res, max_bytes=spec.max_bytes, range_bytes=spec.range_bytes,
+                                               timeout=spec.timeout_s, expect_status=spec.expect_status,
+                                               method=spec.method, extra_headers=extra, secret_headers=secrets)
+        except ProbeFailure as exc:
+            if secrets is not None and exc.detail.get("status") == 401:
+                raise ProbeFailure("http", "authentication_failed",
+                                   f"credentials from {', '.join(spec.basic_auth_env)} were rejected by {service.host}")
+            raise
         self._check_body(spec, body)
 
     @staticmethod
@@ -403,7 +432,12 @@ class Prober:
         res.stages.append(Stage("ssh", "ok", _ms(t0), {"banner": line[:120]}))
 
     def _sftp_list(self, service: Service, spec: ProbeSpec, res: ProbeResult) -> None:
+        import logging
+
         import paramiko  # local import keeps startup light
+
+        # paramiko logs full tracebacks from its transport thread; the probe records the error itself.
+        logging.getLogger("paramiko").setLevel(logging.CRITICAL)
 
         self.guard.check(service.host)
         to = spec.timeout_s or self.settings.connect_timeout_s

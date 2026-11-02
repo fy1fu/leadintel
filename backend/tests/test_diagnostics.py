@@ -100,3 +100,7 @@ def test_removed_probe_definitions_do_not_linger(tmp_path):
     finally:
         for x in servers:
             x.close()
+
+
+def test_skipped_probes_prevent_operational_claim():
+    assert service_status(True, [pr("success", reached=True), pr("skipped")]) == ("partially_verified", True)
