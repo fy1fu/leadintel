@@ -3,7 +3,7 @@
 Local business acquisition & website-opportunity intelligence platform: discovers local businesses,
 evaluates their web presence against industry-specific benchmarks, and ranks them as website-development prospects.
 
-Status: planning. See [docs/PLAN.md](docs/PLAN.md) for research, architecture, scoring methodology and phased roadmap.
+Status: planning (free-first architecture, v0.2). See [docs/PLAN.md](docs/PLAN.md) for research, cost inventory, architecture and phased roadmap.
 
 Planned layout:
 
