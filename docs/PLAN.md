@@ -165,7 +165,7 @@ For every business the UI shows a **source checklist**, e.g. "Overture ✓ found
 - **Geographic coverage:** a map layer coloured by coverage state per county / ZIP / grid cell and per source, plus business density.
 - **Industry coverage:** businesses per industry by source. This highlights industries where free data is thin (e.g. mobile services).
 - **Contact completeness:** % with verified phone / website / email / address, by source and industry.
-- **Benchmark against expected totals:** Census County Business Patterns establishment counts by NAICS and county (free) give a rough "expected vs found" ratio per industry. This is clearly labelled as an estimate because the definitions differ.
+- **Benchmark against expected totals:** Census County Business Patterns establishment counts by NAICS and county (free bulk files on `www2.census.gov`; the Census API now requires a key and is not used) give a rough "expected vs found" ratio per industry. This is clearly labelled as an estimate because the definitions differ.
 
 ---
 
@@ -379,7 +379,17 @@ docs/           PLAN.md  data-sources.md  scoring.md
 
 ---
 
-## 12. Open items for you
+## 12. Network requirements and diagnostics
+
+Implemented ahead of Phase 1. Full details: [NETWORK.md](NETWORK.md).
+- Every fixed external host is registered in [`config/network.yaml`](../config/network.yaml) with its purpose, required/optional status, cost class and real probes.
+- `leadintel net-check` and `/diagnostics/network` report DNS, proxy, TCP, TLS, HTTP and download failures separately. They distinguish "network allowed" from "operational", and record the last successful download.
+- Overture failover covers S3 → Azure Blob → Azure DFS, with per-file continuation.
+- OSM uses Geofabrik extracts with MD5 verification, resume and incremental refresh. Overpass is only a small-area fallback.
+- Business-website crawling uses a separate SSRF-protected client.
+- Paid providers are blocked and the number of paid requests is reported (0).
+
+## 13. Open items for you
 
 1. **Hardware for local AI:** do you have a GPU, and how much VRAM? About 8 GB runs a capable vision model; without one, the `none` provider is used and subjective criteria are marked "not assessed".
 2. **Foursquare OS Places:** willing to create a free Hugging Face account and accept the gated-access form? Optional; adds a third places source.

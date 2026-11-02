@@ -12,3 +12,15 @@ backend/    FastAPI + PostGIS + Procrastinate workers (discovery, crawl, analysi
 frontend/   React + Vite + TypeScript + Tailwind, interactive map
 docs/       plan, scoring methodology, data-source notes
 ```
+
+## Backend quick start
+
+```bash
+cd backend
+python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+.venv/bin/python -m pytest                      # offline test suite
+.venv/bin/leadintel net-check                   # live network diagnostics (real requests, no paid APIs)
+.venv/bin/uvicorn app.api.main:create_app --factory   # http://localhost:8000/diagnostics/network
+```
+
+Network requirements, fallbacks and egress safety: [docs/NETWORK.md](docs/NETWORK.md).

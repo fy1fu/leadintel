@@ -16,3 +16,4 @@ data/
 storage/
 *.log
 .DS_Store
+*.egg-info/

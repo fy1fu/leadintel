@@ -1,0 +1,338 @@
+# LeadIntel external network registry.
+#
+# Every fixed infrastructure host the application contacts MUST be listed here.
+# The infrastructure HTTP client refuses hosts that are not registered.
+# Business-website crawling is NOT governed by this list; it uses the separate
+# SSRF-protected egress client (app/net/safe_egress.py).
+#
+# Fields
+#   capability : services sharing a capability are interchangeable mirrors; `priority` orders them.
+#   required   : the capability is needed for core functionality of an enabled feature.
+#   enabled    : optional integrations default to false and are never probed/used unless enabled.
+#   cost_class : free | free_limited | paid   (paid services live under paid_providers and are blocked)
+#   probes     : real requests used by diagnostics. Nothing is reported as working until one succeeds.
+
+version: 1
+user_agent: "LeadIntel/0.2 (+https://github.com/fy1fu/leadintel; local business research)"
+
+capabilities:
+  overture_places:   {required: true,  description: "Overture Maps Places GeoParquet (primary business discovery)"}
+  sunbiz_bulk:       {required: true,  description: "Florida Division of Corporations bulk files (new registrations)"}
+  census_geocoder:   {required: true,  description: "Address geocoding for registry/licence records"}
+  census_files:      {required: true,  description: "TIGER/Line boundaries and County Business Patterns files"}
+  osm_extract:       {required: true,  description: "OpenStreetMap regional extracts (preferred OSM access)"}
+  map_tiles:         {required: true,  description: "Vector base-map tiles for the MapLibre map (fetched by the browser)"}
+  dbpr_licences:     {required: true,  description: "Florida DBPR licensee CSV extracts"}
+  duval_btr:         {required: false, description: "Duval County business tax receipt reports"}
+  npi_registry:      {required: false, description: "NPPES NPI registry (healthcare practices)"}
+  commoncrawl_data:  {required: false, description: "Common Crawl data files (website discovery)"}
+  commoncrawl_index: {required: false, description: "Common Crawl URL index API (website discovery)"}
+  wayback:           {required: false, description: "Wayback Machine CDX (website age / maintenance history)"}
+  rdap:              {required: false, description: "RDAP domain registration data (domain age)"}
+  nominatim:         {required: false, description: "Interactive place-name lookup (1 req/s policy)"}
+  osm_overpass:      {required: false, description: "Overpass API (last-resort OSM fallback for small areas)"}
+  foursquare_os:     {required: false, description: "Foursquare OS Places (gated Hugging Face dataset)"}
+  local_ai:          {required: false, description: "Local Ollama server for AI website assessment"}
+
+services:
+  # ---------------------------------------------------------------- Overture (3 mirrors)
+  - key: overture_s3
+    capability: overture_places
+    priority: 1
+    host: overturemaps-us-west-2.s3.us-west-2.amazonaws.com
+    purpose: "Overture releases on AWS Open Data (S3 REST over HTTPS)"
+    enabled: true
+    cost_class: free
+    probes:
+      - {key: list_releases, kind: http, url: "https://overturemaps-us-west-2.s3.us-west-2.amazonaws.com/?list-type=2&prefix=release/&delimiter=/", expect_status: [200], expect_body_contains: "<CommonPrefixes>"}
+      - {key: parquet_range, kind: download, resolver: overture_sample_object, range_bytes: 4096, expect_magic: "PAR1"}
+  - key: overture_azure_blob
+    capability: overture_places
+    priority: 2
+    host: overturemapswestus2.blob.core.windows.net
+    purpose: "Overture releases on Azure Open Datasets (Blob endpoint) - fallback mirror"
+    enabled: true
+    cost_class: free
+    probes:
+      - {key: list_releases, kind: http, url: "https://overturemapswestus2.blob.core.windows.net/release?restype=container&comp=list&delimiter=/&maxresults=50", expect_status: [200], expect_body_contains: "<BlobPrefix>"}
+      - {key: parquet_range, kind: download, resolver: overture_sample_object, range_bytes: 4096, expect_magic: "PAR1"}
+  - key: overture_azure_dfs
+    capability: overture_places
+    priority: 3
+    host: overturemapswestus2.dfs.core.windows.net
+    purpose: "Overture releases on Azure Data Lake (DFS endpoint) - second fallback"
+    enabled: true
+    cost_class: free
+    probes:
+      - {key: list_root, kind: http, url: "https://overturemapswestus2.dfs.core.windows.net/release?resource=filesystem&recursive=false&maxResults=5", expect_status: [200], expect_body_contains: "\"paths\""}
+      - {key: parquet_range, kind: download, resolver: overture_sample_object, range_bytes: 4096, expect_magic: "PAR1"}
+
+  # ---------------------------------------------------------------- Sunbiz
+  - key: sunbiz_sftp
+    capability: sunbiz_bulk
+    priority: 1
+    host: sftp.floridados.gov
+    port: 22
+    purpose: "Sunbiz daily/quarterly corporate and fictitious-name files (SFTP)"
+    enabled: true
+    cost_class: free
+    probes:
+      - {key: ssh_banner, kind: ssh_banner}
+      # Directory listing requires the publicly documented Sunbiz SFTP credentials, supplied via
+      # SUNBIZ_SFTP_USER / SUNBIZ_SFTP_PASSWORD. Skipped (not failed) when they are not configured.
+      - {key: sftp_list, kind: sftp_list, path: "/", needs_env: [SUNBIZ_SFTP_USER, SUNBIZ_SFTP_PASSWORD]}
+
+  # ---------------------------------------------------------------- Census
+  - key: census_geocoder
+    capability: census_geocoder
+    priority: 1
+    host: geocoding.geo.census.gov
+    purpose: "US Census Geocoder (single + batch, no key)"
+    enabled: true
+    cost_class: free
+    probes:
+      - {key: geocode_address, kind: http, url: "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress?address=117+W+Duval+St,+Jacksonville,+FL+32202&benchmark=Public_AR_Current&format=json", expect_status: [200], expect_body_contains: "addressMatches"}
+  - key: census_www2
+    capability: census_files
+    priority: 1
+    host: www2.census.gov
+    purpose: "TIGER/Line boundary shapefiles and County Business Patterns bulk files"
+    enabled: true
+    cost_class: free
+    probes:
+      - {key: tiger_state_zip, kind: download, url: "https://www2.census.gov/geo/tiger/TIGER2025/STATE/tl_2025_us_state.zip", range_bytes: 1024, expect_magic: "PK"}
+
+  # ---------------------------------------------------------------- OpenStreetMap extracts (preferred) + Overpass (fallback)
+  - key: geofabrik_main
+    capability: osm_extract
+    priority: 1
+    host: download.geofabrik.de
+    purpose: "Geofabrik daily OSM extracts (.osm.pbf) and region index"
+    enabled: true
+    cost_class: free
+    probes:
+      - {key: md5_file, kind: download, url: "https://download.geofabrik.de/north-america/us/florida-latest.osm.pbf.md5", range_bytes: 0, expect_body_regex: "^[0-9a-f]{32}\\s"}
+      - {key: pbf_range, kind: download, url: "https://download.geofabrik.de/north-america/us/florida-latest.osm.pbf", range_bytes: 2048, expect_body_contains_bytes: "OSMHeader"}
+  - key: geofabrik_ext2
+    capability: osm_extract
+    priority: 2
+    host: download-ext2.geofabrik.de
+    purpose: "Geofabrik secondary download host (fallback mirror; same paths assumed - verified only by probe)"
+    enabled: true
+    cost_class: free
+    probes:
+      - {key: md5_file, kind: download, url: "https://download-ext2.geofabrik.de/north-america/us/florida-latest.osm.pbf.md5", range_bytes: 0, expect_body_regex: "^[0-9a-f]{32}\\s"}
+  - key: overpass_main
+    capability: osm_overpass
+    priority: 1
+    host: overpass-api.de
+    purpose: "Overpass API main instance (fair use; small-area fallback only)"
+    enabled: true
+    cost_class: free_limited
+    probes:
+      - {key: status, kind: http, url: "https://overpass-api.de/api/status", expect_status: [200], expect_body_contains: "Connected as"}
+  - key: overpass_private_coffee
+    capability: osm_overpass
+    priority: 2
+    host: overpass.private.coffee
+    purpose: "Overpass community instance (fallback)"
+    enabled: true
+    cost_class: free_limited
+    probes:
+      - {key: status, kind: http, url: "https://overpass.private.coffee/api/status", expect_status: [200], expect_body_contains: "Connected as"}
+  - key: overpass_kumi
+    capability: osm_overpass
+    priority: 3
+    host: overpass.kumi.systems
+    purpose: "Overpass community instance (fallback)"
+    enabled: true
+    cost_class: free_limited
+    probes:
+      - {key: status, kind: http, url: "https://overpass.kumi.systems/api/status", expect_status: [200], expect_body_contains: "Connected as"}
+
+  # ---------------------------------------------------------------- Map tiles (browser-side)
+  - key: openfreemap
+    capability: map_tiles
+    priority: 1
+    host: tiles.openfreemap.org
+    purpose: "OpenFreeMap vector tiles + style (donation-funded, no key). Self-hosted PMTiles is the offline fallback."
+    enabled: true
+    cost_class: free_limited
+    probes:
+      - {key: style, kind: http, url: "https://tiles.openfreemap.org/styles/liberty", expect_status: [200], expect_body_contains: "\"sources\""}
+      - {key: tile_z0, kind: download, resolver: tilejson_first_tile, url: "https://tiles.openfreemap.org/planet", range_bytes: 0, min_bytes: 100}
+
+  # ---------------------------------------------------------------- Licences / local records
+  - key: dbpr
+    capability: dbpr_licences
+    priority: 1
+    host: www2.myfloridalicense.com
+    purpose: "DBPR public-records licensee CSV extracts (weekly)"
+    enabled: true
+    cost_class: free
+    probes:
+      - {key: construction_csv_range, kind: download, url: "https://www2.myfloridalicense.com/sto/file_download/extracts/cilb_certified.csv", range_bytes: 1024, expect_body_contains_bytes: "\""}
+  - key: duval_taxcollector
+    capability: duval_btr
+    priority: 1
+    host: taxcollector.jacksonville.gov
+    purpose: "Duval Tax Collector data-request page (BTR report links)"
+    enabled: true
+    cost_class: free
+    probes:
+      - {key: data_requests_page, kind: http, url: "https://taxcollector.jacksonville.gov/taxes/data-requests", expect_status: [200], expect_body_contains: "Business"}
+  - key: duval_county_taxes
+    capability: duval_btr
+    priority: 2
+    host: duval.county-taxes.com
+    purpose: "Duval BTR report portal (may present a bot challenge; never bypassed)"
+    enabled: true
+    cost_class: free
+    probes:
+      - {key: portal_home, kind: http, url: "https://duval.county-taxes.com/", expect_status: [200]}
+  - key: npi_api
+    capability: npi_registry
+    priority: 1
+    host: npiregistry.cms.hhs.gov
+    purpose: "NPPES NPI Registry API (no key)"
+    enabled: true
+    cost_class: free
+    probes:
+      - {key: api_query, kind: http, url: "https://npiregistry.cms.hhs.gov/api/?version=2.1&city=Jacksonville&state=FL&limit=1", expect_status: [200], expect_body_contains: "result_count"}
+  - key: npi_bulk
+    capability: npi_registry
+    priority: 2
+    host: download.cms.gov
+    purpose: "NPPES monthly full-file downloads"
+    enabled: true
+    cost_class: free
+    probes:
+      # Must list actual download links; a maintenance notice is not "operational".
+      - {key: files_page, kind: http, url: "https://download.cms.gov/nppes/NPI_Files.html", expect_status: [200], expect_body_contains: ".zip"}
+
+  # ---------------------------------------------------------------- Website discovery / history
+  - key: commoncrawl_data
+    capability: commoncrawl_data
+    priority: 1
+    host: data.commoncrawl.org
+    purpose: "Common Crawl data files"
+    enabled: true
+    cost_class: free
+    probes:
+      - {key: paths_range, kind: download, url: "https://data.commoncrawl.org/crawl-data/CC-MAIN-2024-10/warc.paths.gz", range_bytes: 1024, expect_magic_hex: "1f8b"}
+  - key: commoncrawl_cloudfront
+    capability: commoncrawl_data
+    priority: 2
+    host: ds5q9oxwqwsfj.cloudfront.net
+    purpose: "CloudFront distribution serving the same Common Crawl data (fallback alias of data.commoncrawl.org)"
+    enabled: true
+    cost_class: free
+    probes:
+      - {key: paths_range, kind: download, url: "https://ds5q9oxwqwsfj.cloudfront.net/crawl-data/CC-MAIN-2024-10/warc.paths.gz", range_bytes: 1024, expect_magic_hex: "1f8b"}
+  - key: commoncrawl_index
+    capability: commoncrawl_index
+    priority: 1
+    host: index.commoncrawl.org
+    purpose: "Common Crawl CDX URL index API"
+    enabled: true
+    cost_class: free_limited
+    probes:
+      - {key: collinfo, kind: http, url: "https://index.commoncrawl.org/collinfo.json", expect_status: [200], expect_body_contains: "cdx-api"}
+  - key: wayback_cdx
+    capability: wayback
+    priority: 1
+    host: web.archive.org
+    purpose: "Wayback Machine CDX API"
+    enabled: true
+    cost_class: free_limited
+    probes:
+      - {key: cdx_query, kind: http, url: "https://web.archive.org/cdx/search/cdx?url=jacksonville.gov&limit=1&output=json", expect_status: [200], timeout_s: 30}
+  - key: iana_rdap_bootstrap
+    capability: rdap
+    priority: 1
+    host: data.iana.org
+    purpose: "IANA RDAP bootstrap (maps TLD -> registry RDAP server)"
+    enabled: true
+    cost_class: free
+    probes:
+      - {key: dns_bootstrap, kind: http, url: "https://data.iana.org/rdap/dns.json", expect_status: [200], expect_body_contains: "services"}
+  - key: rdap_verisign
+    capability: rdap
+    priority: 2
+    host: rdap.verisign.com
+    purpose: "RDAP server for .com/.net domains"
+    enabled: true
+    cost_class: free
+    probes:
+      - {key: domain_lookup, kind: http, url: "https://rdap.verisign.com/com/v1/domain/example.com", expect_status: [200], expect_body_contains: "events"}
+  - key: rdap_org
+    capability: rdap
+    priority: 3
+    host: rdap.org
+    purpose: "RDAP redirector (redirects to registry servers; only useful if those hosts are reachable too)"
+    enabled: true
+    cost_class: free
+    probes:
+      # Follows the redirect to the registry; a bare redirect is not proof that RDAP data is obtainable.
+      - {key: lookup_via_redirect, kind: http, url: "https://rdap.org/domain/example.com", expect_status: [200], expect_body_contains: "events"}
+
+  # ---------------------------------------------------------------- Interactive geocoding
+  - key: nominatim
+    capability: nominatim
+    priority: 1
+    host: nominatim.openstreetmap.org
+    purpose: "Place-name search for the area picker (max 1 req/s, no bulk)"
+    enabled: true
+    cost_class: free_limited
+    probes:
+      - {key: search, kind: http, url: "https://nominatim.openstreetmap.org/search?q=Duval+County,+Florida&format=json&limit=1", expect_status: [200], expect_body_contains: "\"lat\""}
+
+  # ---------------------------------------------------------------- Optional, disabled by default
+  - key: huggingface
+    capability: foursquare_os
+    priority: 1
+    host: huggingface.co
+    purpose: "Foursquare OS Places (gated; needs a free account + access approval)"
+    enabled: false
+    cost_class: free_limited
+    probes:
+      - {key: dataset_meta, kind: http, url: "https://huggingface.co/api/datasets/foursquare/fsq-os-places", expect_status: [200]}
+  - key: ollama_local
+    capability: local_ai
+    priority: 1
+    host: localhost
+    port: 11434
+    local: true
+    purpose: "Local Ollama server (free local AI). Not an internet dependency."
+    enabled: false
+    cost_class: free
+    probes:
+      - {key: version, kind: http, url: "http://localhost:11434/api/version", expect_status: [200]}
+
+# Paid providers: blocked by the cost guard; never contacted unless explicitly enabled with a budget.
+paid_providers:
+  - {key: google_places, hosts: [places.googleapis.com, maps.googleapis.com], purpose: "Google Places API (optional future discovery adapter)"}
+  - {key: google_maps_js, hosts: [maps.googleapis.com, maps.gstatic.com], purpose: "Google Maps JS (only needed if Google Places data is displayed)"}
+  - {key: google_pagespeed, hosts: [pagespeedonline.googleapis.com], purpose: "PageSpeed Insights API (needs Google key; local Lighthouse used instead)"}
+  - {key: google_gemini, hosts: [generativelanguage.googleapis.com], purpose: "Gemini API"}
+  - {key: anthropic, hosts: [api.anthropic.com], purpose: "Claude API (optional paid AI provider)"}
+  - {key: openai, hosts: [api.openai.com], purpose: "OpenAI API"}
+  - {key: brave_search, hosts: [api.search.brave.com], purpose: "Brave Search API"}
+  - {key: serper, hosts: [google.serper.dev], purpose: "Serper search API"}
+  - {key: serpapi, hosts: [serpapi.com], purpose: "SerpApi"}
+  - {key: mapbox, hosts: [api.mapbox.com], purpose: "Mapbox"}
+  - {key: maptiler, hosts: [api.maptiler.com], purpose: "MapTiler"}
+  - {key: stadia, hosts: [tiles.stadiamaps.com], purpose: "Stadia Maps"}
+  - {key: foursquare_api, hosts: [places-api.foursquare.com, api.foursquare.com], purpose: "Foursquare Places API (paid; distinct from the free OS dataset)"}
+  - {key: yelp_fusion, hosts: [api.yelp.com], purpose: "Yelp Fusion API"}
+
+# Hosts that were considered or allowlisted earlier but are NOT needed by the application.
+not_required:
+  - {host: dos.fl.gov, reason: "Sunbiz web pages are behind a Cloudflare bot challenge; data comes from the SFTP bulk files instead. Never scraped."}
+  - {host: search.sunbiz.org, reason: "Per-entity web search; bulk SFTP files replace it. Do not scrape."}
+  - {host: wiki.openstreetmap.org, reason: "Documentation only; not used at runtime."}
+  - {host: tigerweb.geo.census.gov, reason: "TIGERweb REST is optional; boundaries are loaded from TIGER/Line files on www2.census.gov."}
+  - {host: api.census.gov, reason: "Now redirects to a 'missing key' page; County Business Patterns is taken from bulk files on www2.census.gov instead."}
+  - {host: extensions.duckdb.org, reason: "DuckDB extensions not needed; Overture is read with PyArrow over HTTPS range requests."}
+  - {host: build.protomaps.com, reason: "Only for producing an optional self-hosted PMTiles extract; not a runtime dependency."}
+  - {host: www.fdacs.gov, reason: "No confirmed bulk data endpoint yet; add when an FDACS adapter is built."}
