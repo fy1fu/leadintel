@@ -25,6 +25,9 @@ class Settings:
     config_dir: Path = field(default_factory=lambda: Path(os.environ.get("LEADINTEL_CONFIG_DIR", REPO_ROOT / "config")))
     data_dir: Path = field(default_factory=lambda: Path(os.environ.get("LEADINTEL_DATA_DIR", REPO_ROOT / "data")))
     database_url: str | None = field(default_factory=lambda: os.environ.get("LEADINTEL_DATABASE_URL"))
+    # Network diagnostics use their OWN store so they keep working when the main business
+    # database is down or not yet set up. Never derived from LEADINTEL_DATABASE_URL.
+    netdiag_db_url: str | None = field(default_factory=lambda: os.environ.get("LEADINTEL_NETDIAG_DB_URL"))
 
     # Egress proxy. Default: honour the standard HTTPS_PROXY / NO_PROXY variables.
     proxy_url: str | None = field(default_factory=lambda: None if _env_bool("LEADINTEL_IGNORE_PROXY")
@@ -53,6 +56,12 @@ class Settings:
             return self.database_url
         self.data_dir.mkdir(parents=True, exist_ok=True)
         return f"sqlite:///{self.data_dir / 'leadintel.db'}"
+
+    @property
+    def netdiag_url(self) -> str:
+        if self.netdiag_db_url:
+            return self.netdiag_db_url
+        return f"sqlite:///{self.data_dir / 'netdiag.db'}"
 
     @cached_property
     def ssl_context(self) -> ssl.SSLContext:

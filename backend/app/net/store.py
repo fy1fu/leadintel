@@ -52,8 +52,9 @@ class NetEventRow(Base):
 
 
 class NetStore:
-    def __init__(self, url: str | None = None, engine: Engine | None = None):
+    def __init__(self, url: str | None = None, engine: Engine | None = None, mode: str = "persistent"):
         self.engine = engine or _make_engine(url or "sqlite://")
+        self.mode = mode if (url or engine) else "memory"
         Base.metadata.create_all(self.engine)
 
     # ---- writes -----------------------------------------------------------

@@ -104,3 +104,35 @@ def test_removed_probe_definitions_do_not_linger(tmp_path):
 
 def test_skipped_probes_prevent_operational_claim():
     assert service_status(True, [pr("success", reached=True), pr("skipped")]) == ("partially_verified", True)
+
+
+def test_diagnostics_do_not_depend_on_main_database(tmp_path, monkeypatch):
+    from app.config import Settings
+    from app.net.service import build_context
+    monkeypatch.setenv("LEADINTEL_DATABASE_URL", "postgresql+psycopg://nobody@127.0.0.1:1/unreachable")
+    monkeypatch.delenv("LEADINTEL_NETDIAG_DB_URL", raising=False)
+    monkeypatch.setenv("LEADINTEL_DATA_DIR", str(tmp_path / "data"))
+    ctx = build_context(Settings())
+    assert ctx.store.mode == "persistent"
+    assert str(ctx.store.engine.url).endswith("netdiag.db") and "postgresql" not in str(ctx.store.engine.url)
+
+
+def test_unopenable_store_falls_back_to_memory_and_diagnostics_still_run(tmp_path, monkeypatch):
+    from app.config import Settings
+    from app.net.service import build_context
+    blocker = tmp_path / "file-not-dir"
+    blocker.write_text("x")
+    monkeypatch.setenv("LEADINTEL_NETDIAG_DB_URL", f"sqlite:///{blocker}/sub/netdiag.db")
+    ctx = build_context(Settings())
+    assert ctx.store.mode.startswith("memory (fallback")
+    report = ctx.diagnostics.full_report()
+    assert report["store"]["mode"].startswith("memory") and report["paid_requests_made"] == []
+
+
+def test_cli_runs_without_any_store(tmp_path, monkeypatch, capsys):
+    from app import cli
+    monkeypatch.setenv("LEADINTEL_DATA_DIR", str(tmp_path / "data"))
+    rc = cli.main(["net-check", "--no-run", "--no-store", "--json"])
+    out = capsys.readouterr()
+    assert rc in (0, 2) and '"mode": "memory (persistence disabled)"' in out.out
+    assert not (tmp_path / "data" / "netdiag.db").exists()

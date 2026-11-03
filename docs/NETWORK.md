@@ -144,7 +144,16 @@ Capabilities roll up their mirrors:
 
 *Residual risk:* a name the proxy resolves to an internal address is caught only if local DNS also returns it. The proxy's own network policy is the remaining control. Production deployments without a proxy get full pinning.
 
-## 6. Running it
+## 6. Independence from the main database
+
+Network diagnostics never depend on the business database:
+- They use their own store, which can be overridden by `LEADINTEL_NETDIAG_DB_URL`.
+- If that store can't be opened, results are kept in memory, and the report shows `store.mode`.
+- `leadintel net-check --no-store` runs with no database at all.
+
+So connectivity can be diagnosed even when Postgres is down or not yet installed. Tests cover all three cases.
+
+## 6a. Running it
 
 ```bash
 cd backend && .venv/bin/leadintel net-check            # probe everything enabled, print summary
@@ -160,7 +169,8 @@ LEADINTEL_LIVE_TESTS=1 .venv/bin/python -m pytest -m live   # opt-in live tests
 |---|---|---|
 | `LEADINTEL_CONFIG_DIR` | `<repo>/config` | Location of `network.yaml` |
 | `LEADINTEL_DATA_DIR` | `<repo>/data` (git-ignored) | Downloads, SQLite database |
-| `LEADINTEL_DATABASE_URL` | SQLite in the data dir | e.g. `postgresql+psycopg://…` |
+| `LEADINTEL_DATABASE_URL` | unset | Main business database (Phase 1). **Not used by network diagnostics.** |
+| `LEADINTEL_NETDIAG_DB_URL` | `<data dir>/netdiag.db` (SQLite) | Network diagnostics store, independent of the main database. If it can't be opened, diagnostics fall back to memory and say so. `--no-store` skips storage entirely. |
 | `HTTPS_PROXY` / `NO_PROXY` | unset | Standard egress-proxy settings; honoured automatically |
 | `LEADINTEL_IGNORE_PROXY` | `false` | Ignore `HTTPS_PROXY` for diagnostics |
 | `LEADINTEL_CA_BUNDLE` (or `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE`) | system store | Extra CA bundle to trust in addition to the system store; verification is never disabled |

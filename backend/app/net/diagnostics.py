@@ -190,6 +190,8 @@ class Diagnostics:
         return {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "latest_run_id": self.store.latest_run_id(),
+            "store": {"mode": self.store.mode,
+                      "note": "Diagnostics use their own store, independent of the main business database."},
             "egress": {"proxy": bool(self.settings.proxy_url),
                        "note": "Hosts reached through an egress proxy: DNS is resolved by the proxy; "
                                "'network_allowed' means the proxy established the tunnel."},

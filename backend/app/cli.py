@@ -19,9 +19,12 @@ def main(argv: list[str] | None = None) -> int:
     nc.add_argument("--json", action="store_true", help="print the full JSON report")
     nc.add_argument("--markdown", type=Path, help="write a Markdown report to this path")
     nc.add_argument("--no-run", action="store_true", help="report the latest stored results without probing")
+    nc.add_argument("--no-store", action="store_true", help="keep results in memory only (no database at all)")
     args = ap.parse_args(argv)
 
-    ctx = build_context()
+    ctx = build_context(persist=not args.no_store)
+    if ctx.store.mode != "persistent":
+        print(f"note: diagnostics store is {ctx.store.mode}", file=sys.stderr)
     if not args.no_run:
         only = [k.strip() for k in args.only.split(",")] if args.only else None
         ctx.diagnostics.run(only=only, include_disabled=args.include_disabled)
