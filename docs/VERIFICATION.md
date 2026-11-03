@@ -20,6 +20,23 @@ Status as of 2026-11-03 (updated during Phase 1). Items are closed only by a rea
 
 | V12 | Windows run of the PR #1 test suite and live diagnostics | Not yet run; Windows-specific socket handling added, not exercised | **Correctness** (platform-specific behaviour on Windows) | Before merging PR #1 | Procedure in PR #1 description |
 | V13 | DBPR licensee CSV column meanings (no published layout found); county-code map (all 67 codes, alphabetical from 11: Clay 20, Duval 26, St. Johns 65) | **Open: inferred, not officially verified.** Consistency check only: 99.21% of 626,509 rows agree with the Census ZIP->county relationship; the 0.79% disagreements are investigated in [DBPR_GEOGRAPHY.md](DBPR_GEOGRAPHY.md). On import, county/ZIP conflicts are excluded and never placed in a target county; code-only and ZIP-only assignments are flagged; every decision is stored with its raw values and reason (`code_map: inferred_v13`) | **Correctness** (licence evidence attribution) | No (evidence only; never creates prospects) | Find the official DBPR extract layout and code table, or ask DBPR |
-| V14 | One real Sunbiz corporate record with document number `11` (file 20261027c.txt, line 220) | Quarantined, not guessed | Correctness (single record) | No | Re-check after the next quarterly file |
+| V14 | One real Sunbiz corporate record with document number `11` (file 20261027c.txt, line 220) | **Open.** Quarantined, not guessed; still the only quarantine record after run 9 (2026-11-03) | Correctness (single record) | No | Re-check after the next quarterly file |
+
+## Validation of the PR #3 review fixes (2026-11-03)
+
+Environment: build sandbox (Linux), Python 3.13.18, PostgreSQL 16.15 + PostGIS 3.4.2, Chromium. **Windows not run (V12).** Full results, the real-data comparison and limitations are in [PHASE1_PROGRESS.md §5](PHASE1_PROGRESS.md).
+
+| Check | Result |
+|---|---|
+| Full PostgreSQL suite | 228 passed, 5 skipped (the opt-in live tests) |
+| Cap property test | 300 passing, 0 failing |
+| Live-network tests | 5 passed |
+| Browser (desktop + mobile) | Passed, no errors |
+| Migration 0003 → 0005 on the real database | All row counts identical |
+| Killed runs (Overture, early, DBPR stage) | Marked `interrupted`; no partial import, no duplicates, no false coverage; recovery run completed |
+| Paid requests | 0 |
+| Secret scan of the branch | Clean |
+
+V13 and V14 remain **open**. The DBPR county-code map is consistent with Census ZIP data but is **not officially verified**.
 
 The v0.3 requirements are consolidated in [ROADMAP.md](ROADMAP.md); the 2026-11-03 architecture review is in [REVIEW.md](REVIEW.md).
