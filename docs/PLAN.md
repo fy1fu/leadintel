@@ -56,7 +56,7 @@ Legend:
 
 | Component | Default choice | Class | Notes / limits |
 |---|---|---|---|
-| **Discovery: registry** | Florida Sunbiz bulk files (daily + quarterly, corporations and fictitious names) | 🟢 | SFTP. Unreachable from this build sandbox, so the importer is built against fixtures here and runs for real on the host [secondary]. |
+| **Discovery: registry** | Florida Sunbiz bulk files (daily + quarterly, corporations and fictitious names) | 🟢 | Free public login. **Verified 2026-11-02**: served over HTTPS/WebDAV from `sftp.floridados.gov` (works from the sandbox), with SFTP on port 22 as a fallback. Formats and gap handling: [SUNBIZ.md](SUNBIZ.md). |
 | **Discovery: places** | Overture Maps Places (AWS/Azure open data) | 🟢 | [tested]. Monthly releases. No egress charge to us (AWS Open Data programme). |
 | Discovery: places | OpenStreetMap via Geofabrik extract (preferred) or Overpass | 🟢 / 🟡 | Free. The public Overpass instance is fair-use and rate-limited. Both were unreachable from this sandbox; they work from a normal internet connection. ODbL attribution. |
 | Discovery: places | Foursquare OS Places | 🟡 | Apache-2.0, but the Hugging Face copy is **gated** (free account + access form) [secondary]. Optional adapter, off until you opt in. |
@@ -165,7 +165,7 @@ For every business the UI shows a **source checklist**, e.g. "Overture ✓ found
 - **Geographic coverage:** a map layer coloured by coverage state per county / ZIP / grid cell and per source, plus business density.
 - **Industry coverage:** businesses per industry by source. This highlights industries where free data is thin (e.g. mobile services).
 - **Contact completeness:** % with verified phone / website / email / address, by source and industry.
-- **Benchmark against expected totals:** Census County Business Patterns establishment counts by NAICS and county (free) give a rough "expected vs found" ratio per industry. This is clearly labelled as an estimate because the definitions differ.
+- **Benchmark against expected totals:** Census County Business Patterns establishment counts by NAICS and county (free bulk files on `www2.census.gov`; the Census API now requires a key and is not used) give a rough "expected vs found" ratio per industry. This is clearly labelled as an estimate because the definitions differ.
 
 ---
 
@@ -345,7 +345,7 @@ docs/           PLAN.md  data-sources.md  scoring.md
 - Adapters:
   - **Overture** (real data)
   - **OSM** (Geofabrik/Overpass; fixtures here, real on the host)
-  - **Sunbiz** (daily + quarterly + fictitious names; fixtures here)
+  - **Sunbiz** (daily + quarterly + fictitious names over HTTPS/WebDAV, with the date ledger and integrity checks from [SUNBIZ.md](SUNBIZ.md))
   - **CSV import**
   - Base contracts for DBPR/BTR/NPI
 - Census geocoding.
@@ -379,7 +379,17 @@ docs/           PLAN.md  data-sources.md  scoring.md
 
 ---
 
-## 12. Open items for you
+## 12. Network requirements and diagnostics
+
+Implemented ahead of Phase 1. Full details: [NETWORK.md](NETWORK.md).
+- Every fixed external host is registered in [`config/network.yaml`](../config/network.yaml) with its purpose, required/optional status, cost class and real probes.
+- `leadintel net-check` and `/diagnostics/network` report DNS, proxy, TCP, TLS, HTTP and download failures separately. They distinguish "network allowed" from "operational", and record the last successful download.
+- Overture failover covers S3 → Azure Blob → Azure DFS, with per-file continuation.
+- OSM uses Geofabrik extracts with MD5 verification, resume and incremental refresh. Overpass is only a small-area fallback.
+- Business-website crawling uses a separate SSRF-protected client.
+- Paid providers are blocked and the number of paid requests is reported (0).
+
+## 13. Open items for you
 
 1. **Hardware for local AI:** do you have a GPU, and how much VRAM? About 8 GB runs a capable vision model; without one, the `none` provider is used and subjective criteria are marked "not assessed".
 2. **Foursquare OS Places:** willing to create a free Hugging Face account and accept the gated-access form? Optional; adds a third places source.
