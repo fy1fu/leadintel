@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.appconfig.store import KINDS, ConfigError, ConfigService
 from app.config import REPO_ROOT, Settings
+from app.db.timeouts import pg_connect_args
 
 
 def svc():
@@ -19,7 +20,8 @@ def test_packaged_defaults_load_and_validate():
 
 
 def test_database_unavailable_falls_back_to_defaults():
-    eff = svc().effective(create_engine("postgresql+psycopg://nobody@127.0.0.1:1/none"))
+    url = "postgresql+psycopg://nobody@127.0.0.1:1/none"
+    eff = svc().effective(create_engine(url, **pg_connect_args(url)))  # same default timeout as the app
     assert eff.mode.startswith("defaults (database unavailable")
     assert eff["scoring"]["evidence_caps"]["0"] == 35 and all(v is None for v in eff.versions.values())
 

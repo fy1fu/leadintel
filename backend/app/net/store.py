@@ -8,6 +8,7 @@ from sqlalchemy import JSON, DateTime, Float, Integer, String, Text, create_engi
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
+from app.db.timeouts import pg_connect_args
 from app.net.probe import ProbeResult
 
 
@@ -126,7 +127,7 @@ def _make_engine(url: str) -> Engine:
         if url in ("sqlite://", "sqlite:///:memory:"):
             kw["poolclass"] = StaticPool  # one shared in-memory database across threads
         return create_engine(url, **kw)
-    return create_engine(url, pool_pre_ping=True)
+    return create_engine(url, pool_pre_ping=True, **pg_connect_args(url))
 
 
 def _aware(dt: datetime) -> datetime:

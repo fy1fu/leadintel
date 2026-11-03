@@ -9,6 +9,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
+from app.db.timeouts import pg_connect_args
 
 
 class DatabaseUnavailable(RuntimeError):
@@ -16,7 +17,8 @@ class DatabaseUnavailable(RuntimeError):
 
 
 def make_engine(settings: Settings) -> Engine:
-    return create_engine(settings.business_db_url, pool_pre_ping=True, future=True)
+    url = settings.business_db_url
+    return create_engine(url, pool_pre_ping=True, future=True, **pg_connect_args(url))
 
 
 def check_database(engine: Engine) -> None:

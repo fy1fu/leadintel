@@ -6,6 +6,7 @@ from alembic import context
 from sqlalchemy import create_engine
 
 from app.db.models import Base
+from app.db.timeouts import pg_connect_args
 
 target_metadata = Base.metadata
 
@@ -25,7 +26,8 @@ def include_object(obj, name, type_, reflected, compare_to):
 
 
 def run_migrations_online() -> None:
-    engine = create_engine(_url())
+    url = _url()
+    engine = create_engine(url, **pg_connect_args(url))
     with engine.connect() as conn:
         context.configure(connection=conn, target_metadata=target_metadata, include_object=include_object,
                           compare_type=True)
