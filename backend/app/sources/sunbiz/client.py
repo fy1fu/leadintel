@@ -9,7 +9,7 @@ import os
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from urllib.parse import quote, unquote
@@ -93,7 +93,25 @@ class SunbizClient:
         return sorted(files, key=lambda f: f.day)
 
     def download(self, rf: RemoteFile) -> Downloaded:
+        """Fresh download whenever size OR Last-Modified differs from the cached version (see download_checked)."""
         dest = self.dir / rf.kind / rf.path.rsplit("/", 1)[-1]
-        if dest.exists() and dest.stat().st_size != rf.size:  # remote file changed (regenerated) -> refetch
-            dest.unlink()
-        return download_checked(self.client, BASE + quote(rf.path), dest, expected_size=rf.size, auth=credentials())
+        return download_checked(self.client, BASE + quote(rf.path), dest, expected_size=rf.size,
+                                remote_last_modified=rf.last_modified, auth=credentials())
+
+
+def needs_refresh(latest_imported_size: int | None, latest_imported_modified: datetime | None, rf: RemoteFile) -> bool:
+    """True unless the latest imported version is provably the same remote version.
+
+    Same size is NOT enough: Sunbiz may republish a file with different content but identical size.
+    Without a remote Last-Modified the file is refreshed (a same-size change could not be detected).
+    """
+    if latest_imported_size is None:
+        return True
+    if rf.last_modified is None or latest_imported_modified is None:
+        return True
+    a, b = rf.last_modified, latest_imported_modified
+    if a.tzinfo is None:
+        a = a.replace(tzinfo=timezone.utc)
+    if b.tzinfo is None:
+        b = b.replace(tzinfo=timezone.utc)
+    return latest_imported_size != rf.size or a != b

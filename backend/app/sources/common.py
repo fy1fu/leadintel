@@ -5,6 +5,8 @@ import hashlib
 import json
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 from sqlalchemy import select
@@ -47,23 +49,69 @@ class Downloaded:
     sha256: str
     size: int
     reused: bool
+    remote_last_modified: datetime | None = None
+
+
+def _iso(dt: datetime | None) -> str | None:
+    if dt is None:
+        return None
+    return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).astimezone(timezone.utc).isoformat()
+
+
+def _read_json(path: Path) -> dict | None:
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def _write_json_atomic(path: Path, data: dict) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=1, sort_keys=True))
+    os.replace(tmp, path)
 
 
 def download_checked(client: InfraClient, url: str, dest: Path, *, expected_size: int | None = None,
-                     auth: tuple[str, str] | None = None) -> Downloaded:
-    """Download to `dest` via a .part file with Range resume; verify size; install atomically.
+                     remote_last_modified: datetime | None = None, auth: tuple[str, str] | None = None) -> Downloaded:
+    """Download one remote file version safely; reuse it only when it is provably the same version.
 
-    Reuses an existing file when its size matches `expected_size` (or the server's Content-Length).
+    * Remote identity = size + Last-Modified (from the caller's listing, or a HEAD request).
+    * Every version is installed at an immutable, content-addressed path `<stem>.<sha12><suffix>`;
+      earlier versions (and the source_file records pointing at them) are never overwritten.
+    * `<dest>.meta.json` records the current version (url, size, last_modified, sha256, path).
+      Reuse requires: same size AND same Last-Modified AND the local file's SHA-256 still matching.
+      If the server gives no Last-Modified, the file is fetched again (a same-size change could not
+      be detected otherwise).
+    * Downloads go to `<dest>.part` with Range resume. A partial file is resumed only for the same
+      remote identity, is never installed or imported unless its size is complete, and a failed
+      refresh leaves the previous version and its metadata untouched.
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
     kw = {"auth": auth} if auth else {}
-    if expected_size is None:
+    if expected_size is None or remote_last_modified is None:
         head = client.head(url, **kw)
-        if head.status_code < 400 and head.headers.get("content-length"):
-            expected_size = int(head.headers["content-length"])
-    if dest.exists() and expected_size is not None and dest.stat().st_size == expected_size:
-        return Downloaded(dest, sha256_file(dest), expected_size, True)
+        if head.status_code < 400:
+            if expected_size is None and head.headers.get("content-length"):
+                expected_size = int(head.headers["content-length"])
+            if remote_last_modified is None and head.headers.get("last-modified"):
+                try:
+                    remote_last_modified = parsedate_to_datetime(head.headers["last-modified"])
+                except (TypeError, ValueError):
+                    remote_last_modified = None
+    lm = _iso(remote_last_modified)
+    meta_path = dest.with_name(dest.name + ".meta.json")
+    meta = _read_json(meta_path)
+    if (meta and lm is not None and meta.get("url") == url and meta.get("size") == expected_size
+            and meta.get("last_modified") == lm):
+        cur = Path(meta["path"])
+        if cur.exists() and cur.stat().st_size == meta["size"] and sha256_file(cur) == meta["sha256"]:
+            return Downloaded(cur, meta["sha256"], meta["size"], True, remote_last_modified)
+    identity = {"url": url, "size": expected_size, "last_modified": lm}
     part = dest.with_name(dest.name + ".part")
+    part_meta = part.with_name(part.name + ".meta.json")
+    if part.exists() and _read_json(part_meta) != identity:  # leftover from a different remote version
+        part.unlink()
+    _write_json_atomic(part_meta, identity)
     offset = part.stat().st_size if part.exists() else 0
     if expected_size is not None and offset > expected_size:
         part.unlink()
@@ -80,14 +128,24 @@ def download_checked(client: InfraClient, url: str, dest: Path, *, expected_size
     size = part.stat().st_size
     if expected_size is not None and size != expected_size:
         raise IOError(f"incomplete download of {url}: {size} of {expected_size} bytes (kept .part for resume)")
-    os.replace(part, dest)
-    return Downloaded(dest, sha256_file(dest), size, False)
+    digest = sha256_file(part)
+    final = dest.with_name(f"{dest.stem}.{digest[:12]}{dest.suffix}")
+    if final.exists() and sha256_file(final) == digest:
+        part.unlink()
+    else:
+        os.replace(part, final)
+    _write_json_atomic(meta_path, {"url": url, "size": size, "last_modified": lm, "sha256": digest, "path": str(final)})
+    part_meta.unlink(missing_ok=True)
+    return Downloaded(final, digest, size, False, remote_last_modified)
 
 
 def register_file(s: Session, source: Source, *, kind: str, remote_path: str, dl: Downloaded, logical_date=None,
                   remote_last_modified=None, status: str = "downloaded") -> SourceFile:
-    row = s.execute(select(SourceFile).where(SourceFile.source_id == source.id, SourceFile.remote_path == remote_path,
-                                             SourceFile.sha256 == dl.sha256)).scalar_one_or_none()
+    """One row per (path, content, remote version). Earlier rows are never modified or replaced."""
+    remote_last_modified = remote_last_modified or dl.remote_last_modified
+    row = s.execute(select(SourceFile).where(
+        SourceFile.source_id == source.id, SourceFile.remote_path == remote_path, SourceFile.sha256 == dl.sha256,
+        SourceFile.remote_last_modified.is_not_distinct_from(remote_last_modified))).scalar_one_or_none()
     if row is None:
         row = SourceFile(source_id=source.id, kind=kind, logical_date=logical_date, remote_path=remote_path,
                          size=dl.size, sha256=dl.sha256, local_path=str(dl.path), status=status,

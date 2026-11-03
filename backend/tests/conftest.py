@@ -32,9 +32,14 @@ def pg_engine():
     cfg = Config(str(Path(__file__).parents[1] / "alembic.ini"))
     cfg.set_main_option("script_location", str(Path(__file__).parents[1] / "migrations"))
     cfg.set_main_option("sqlalchemy.url", TEST_DB_URL)
-    command.downgrade(cfg, "base")
-    command.upgrade(cfg, "head")
     engine = create_engine(TEST_DB_URL, future=True)
+    from sqlalchemy import text
+    with engine.begin() as c:  # fresh schema each session (downgrade would refuse to drop file-version history)
+        c.execute(text("DROP SCHEMA public CASCADE"))
+        c.execute(text("CREATE SCHEMA public"))
+        c.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
+        c.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+    command.upgrade(cfg, "head")
     yield engine
     engine.dispose()
 

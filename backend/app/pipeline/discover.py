@@ -33,7 +33,7 @@ from app.sources.common import ensure_source, register_file
 from app.sources.overture.importer import import_snapshot
 from app.sources.overture.reader import BBox, OvertureReader
 from app.sources.overture.snapshot import SnapshotStore
-from app.sources.sunbiz.client import MissingCredentials, SunbizClient
+from app.sources.sunbiz.client import MissingCredentials, SunbizClient, needs_refresh
 from app.sources.sunbiz.importer import import_file
 from app.sources.sunbiz.ledger import PARTIAL_STATES, classify_days
 
@@ -237,11 +237,14 @@ def _run_sunbiz(s: Session, client: InfraClient, settings: Settings, cfg, since:
         failed: set[date] = set()
         for rf in in_range:
             prev = s.execute(select(SourceFile).where(SourceFile.source_id == src.id, SourceFile.remote_path == rf.path,
-                                                      SourceFile.size == rf.size, SourceFile.status == "imported")).scalar_one_or_none()
-            if prev is not None and (rf.last_modified is None or prev.remote_last_modified is None
-                                     or prev.remote_last_modified >= rf.last_modified):
+                                                      SourceFile.status == "imported")
+                             .order_by(SourceFile.id.desc()).limit(1)).scalar_one_or_none()
+            if not needs_refresh(prev.size if prev else None, prev.remote_last_modified if prev else None, rf):
                 out["files_reused"] += 1
                 continue
+            if prev is not None:
+                out.setdefault("files_refreshed", 0)
+                out["files_refreshed"] += 1
             for attempt in (1, 2):  # one retry: isolated transient errors (e.g. a sporadic 401) were observed live
                 try:
                     dl = sc.download(rf)

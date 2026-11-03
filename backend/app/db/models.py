@@ -77,7 +77,9 @@ class SourceFile(Base):
     error: Mapped[str | None] = mapped_column(Text)
     fetched_at: Mapped[datetime] = _now()
     imported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    __table_args__ = (UniqueConstraint("source_id", "remote_path", "sha256"),)
+    # one row per remote version: the same content republished with a new Last-Modified is a new row
+    __table_args__ = (UniqueConstraint("source_id", "remote_path", "sha256", "remote_last_modified",
+                                       name="uq_source_file_version", postgresql_nulls_not_distinct=True),)
 
 
 class SourceDateLedger(Base):
