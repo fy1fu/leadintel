@@ -292,7 +292,7 @@ def _run_dbpr(s: Session, client: InfraClient, settings: Settings, dbpr_cfg: dic
     from pathlib import Path
 
     from app.sources.common import download_checked
-    from app.sources.dbpr.importer import import_extract
+    from app.sources.dbpr.importer import PARSER_VERSION, import_extract
     src = ensure_source(s, "dbpr", dbpr_cfg)
     zc = load_zip_counties(client, settings.data_dir)
     out = {}
@@ -300,7 +300,8 @@ def _run_dbpr(s: Session, client: InfraClient, settings: Settings, dbpr_cfg: dic
         name = Path(f["url"]).name
         dl = download_checked(client, f["url"], settings.data_dir / "dbpr" / name)
         prev = s.execute(select(SourceFile).where(SourceFile.source_id == src.id, SourceFile.remote_path == f["url"],
-                                                  SourceFile.sha256 == dl.sha256, SourceFile.status == "imported")).scalar_one_or_none()
+                                                  SourceFile.sha256 == dl.sha256, SourceFile.status == "imported",
+                                                  SourceFile.parser_version == PARSER_VERSION).limit(1)).scalar_one_or_none()
         if prev is not None:
             out[name] = {"reused": True}
             continue

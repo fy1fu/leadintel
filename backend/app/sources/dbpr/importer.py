@@ -15,6 +15,11 @@ Validity rules (Fix 2; no official layout or rules are published - V13):
 * A malformed or impossible non-blank expiry date, an unrecognised status code, or a row with the
   wrong number of columns is QUARANTINED with its raw line and reason - never evidence.
 * Blank status (very common for QB/FRO/CRS1/PVDR rows) is counted, not quarantined.
+* Geography (Fix 3, `resolve_geo`): the county code and the ZIP's ZCTA counties must not conflict.
+  agree -> that county; code known + ZIP absent/unknown -> code's county (flagged); code unknown + ZIP in
+  exactly one county -> that county (flagged); conflict, ambiguous ZIP, out-of-state or nothing usable ->
+  NO county, so the row can never count toward or attach evidence in Duval / St. Johns / Clay. Matching is
+  restricted to locations in the resolved county. Raw values and the decision are kept in the payload.
 * Evidence created by earlier imports of the same file whose row is no longer accepted is superseded
   (history kept) and its source link deactivated, so it cannot keep inflating scores.
 """
@@ -34,8 +39,25 @@ from app.normalize.core import name_norm, zip5
 from app.sources.common import payload_hash
 
 SOURCE_KEY = "dbpr"
-# DBPR county codes appear to be alphabetical county order + 10 (Alachua=11 ... Duval=26 ... Clay=20, St. Johns=65)
-DBPR_COUNTY_TO_FIPS = {"20": "12019", "26": "12031", "65": "12109"}
+# bump when the acceptance rules change: files imported under another version are re-imported once
+PARSER_VERSION = "dbpr-3"   # 3 = validity rules (Fix 2) + geographic policy (Fix 3)
+# V13 - INFERRED, NOT OFFICIALLY VERIFIED. No authoritative DBPR code list has been found. Until one is, every
+# county derived from a code alone is flagged inferred, and a code is only trusted when the ZIP agrees.
+COUNTY_CODE_MAP_STATUS = "inferred_v13"
+# Inferred rule: Florida counties in alphabetical order
+# (Dade under D) numbered from 11. Census FIPS uses the same order in odd numbers, except Miami-Dade = 086.
+# Checked against the 2026-11 extracts: for all 67 codes, 99.2% of 626k rows have a ZIP whose ZCTA lies
+# in the predicted county (lowest per code 88.8%, small counties with border ZIPs). 7xx codes are
+# out-of-state addresses (GA, TX, NC, ...); blank codes are mostly out-of-state as well.
+_FL_COUNTIES = ("Alachua Baker Bay Bradford Brevard Broward Calhoun Charlotte Citrus Clay Collier Columbia Dade DeSoto "
+                "Dixie Duval Escambia Flagler Franklin Gadsden Gilchrist Glades Gulf Hamilton Hardee Hendry Hernando "
+                "Highlands Hillsborough Holmes IndianRiver Jackson Jefferson Lafayette Lake Lee Leon Levy Liberty Madison "
+                "Manatee Marion Martin Monroe Nassau Okaloosa Okeechobee Orange Osceola PalmBeach Pasco Pinellas Polk "
+                "Putnam StJohns StLucie SantaRosa Sarasota Seminole Sumter Suwannee Taylor Union Volusia Wakulla Walton "
+                "Washington").split()
+DBPR_COUNTY_TO_FIPS = {str(11 + i): ("12086" if n == "Dade" else f"12{2 * i + 1:03d}") for i, n in enumerate(_FL_COUNTIES)}
+assert len(DBPR_COUNTY_TO_FIPS) == 67 and DBPR_COUNTY_TO_FIPS["26"] == "12031" and DBPR_COUNTY_TO_FIPS["20"] == "12019" \
+    and DBPR_COUNTY_TO_FIPS["65"] == "12109" and DBPR_COUNTY_TO_FIPS["77"] == "12133"
 COLUMNS = ["board", "licence_type", "licensee_name", "dba_name", "unknown_4", "addr1", "addr2", "addr3", "city", "state",
            "zip", "county_code", "licence_number_short", "rank", "status", "original_licence_date", "status_date",
            "expiry_date", "unknown_18", "unknown_19", "licence_number", "ce_status"]
@@ -54,7 +76,8 @@ class DbprStats:
     evidence_superseded: int = 0
     in_target: int = 0
     active: int = 0
-    county_zip_mismatch: int = 0
+    county_zip_mismatch: int = 0    # code vs ZIP conflicts touching a target county (excluded)
+    geo: Counter = field(default_factory=Counter)   # resolve_geo status counts for target-relevant rows
     linked: int = 0
     ambiguous: int = 0
     unmatched: int = 0
@@ -78,6 +101,59 @@ def parse_date(v: str | None) -> tuple[str, date | None]:
 def _quarantine(s: Session, sf: SourceFile, line_no: int, raw: bytes, reason: str, fld: str | None) -> None:
     s.execute(insert(QuarantineRecord).on_conflict_do_nothing(index_elements=["source_file_id", "line_no"]),
               [{"source_file_id": sf.id, "line_no": line_no, "raw_line": raw, "reason": reason, "field": fld}])
+
+
+@dataclass
+class GeoDecision:
+    status: str                  # agree | code_only | zip_only | conflict | ambiguous | out_of_state | unresolved
+    county_fips: str | None      # only set when the evidence does not conflict
+    code_fips: str | None
+    zip_fips: list[str]
+    flags: list[str]
+    reason: str = ""
+
+    def as_payload(self, d: dict) -> dict:
+        return {"status": self.status, "county_fips": self.county_fips, "code_fips": self.code_fips,
+                "zip_fips": self.zip_fips, "flags": self.flags, "reason": self.reason,
+                "code_map": COUNTY_CODE_MAP_STATUS, "raw_county_code": d.get("county_code"),
+                "raw_zip": d.get("zip"), "raw_state": d.get("state")}
+
+
+def resolve_geo(d: dict, zip_counties: dict[str, set[str]]) -> GeoDecision:
+    """Never assigns a county on conflicting or ambiguous evidence; source values are left untouched."""
+    code, state, z = d.get("county_code", ""), d.get("state", "").upper(), zip5(d.get("zip"))
+    code_fips = DBPR_COUNTY_TO_FIPS.get(code)
+    zf = sorted(zip_counties.get(z, set())) if z else []   # a missing ZIP never looks anything up
+    flags = []
+    if not d.get("addr1") or not d.get("city"):
+        flags.append("address_incomplete")
+    if not z:
+        flags.append("zip_missing")
+    elif not zf:
+        flags.append("zip_not_in_florida_zcta")
+    if not code:
+        flags.append("county_code_blank")
+    elif code_fips is None:
+        flags.append(f"county_code_unknown:{code}")
+    if (state and state != "FL") or (len(code) == 3 and code.startswith("7")):
+        return GeoDecision("out_of_state", None, code_fips, zf, flags,
+                           f"state {state or '-'} / code {code or '-'}: outside Florida, no county assigned")
+    if code_fips:
+        if not zf:
+            return GeoDecision("code_only", code_fips, code_fips, zf, flags + ["county_from_inferred_code_map"],
+                               f"code {code} -> {code_fips} by the inferred (V13) code map; ZIP gives no county")
+        if code_fips in zf:
+            return GeoDecision("agree", code_fips, code_fips, zf, flags + (["zip_spans_counties"] if len(zf) > 1 else []),
+                               f"code {code} -> {code_fips} corroborated by ZIP {z} counties {zf}")
+        return GeoDecision("conflict", None, code_fips, zf, flags + ["county_zip_conflict"],
+                           f"code {code} -> {code_fips} but ZIP {z} lies in {zf}: no county assigned")
+    if len(zf) == 1:   # unknown/blank code: county from the ZIP only, never silently (status + flag)
+        return GeoDecision("zip_only", zf[0], None, zf, flags + ["county_from_zip_only"],
+                           f"code {code or '-'} unusable; ZIP {z} lies only in {zf[0]}")
+    if len(zf) > 1:
+        return GeoDecision("ambiguous", None, None, zf, flags,
+                           f"code {code or '-'} unusable; ZIP {z} spans {zf}: no county assigned")
+    return GeoDecision("unresolved", None, None, zf, flags, f"code {code or '-'} unusable and no ZIP county: no county assigned")
 
 
 def import_extract(s: Session, src: Source, sf: SourceFile, blob: bytes, zip_counties: dict[str, set[str]],
@@ -109,12 +185,14 @@ def import_extract(s: Session, src: Source, sf: SourceFile, blob: bytes, zip_cou
             _quarantine(s, sf, line_no, raw, f"unrecognised status {d['status']!r}", "status")
             continue
         z = zip5(d["zip"])
-        fips = DBPR_COUNTY_TO_FIPS.get(d["county_code"])
-        zip_fips = zip_counties.get(z or "", set())
-        if fips is None and not (zip_fips & target_fips):
+        g = resolve_geo(d, zip_counties)
+        touches_target = g.county_fips in target_fips or g.code_fips in target_fips or bool(set(g.zip_fips) & target_fips)
+        if touches_target:
+            st.geo[g.status] += 1
+            if g.status == "conflict":
+                st.county_zip_mismatch += 1
+        if g.county_fips not in target_fips:   # conflicting/ambiguous/out-of-state rows never reach a target county
             continue
-        if fips and zip_fips and fips not in zip_fips:
-            st.county_zip_mismatch += 1
         st.in_target += 1
         if d["status"] == "":
             st.status_blank += 1
@@ -133,7 +211,7 @@ def import_extract(s: Session, src: Source, sf: SourceFile, blob: bytes, zip_cou
             continue
         st.active += 1
         st.by_type[d["licence_type"]] += 1
-        d["zip5"], d["line_no"] = z, line_no
+        d["zip5"], d["line_no"], d["geo"] = z, line_no, g.as_payload(d)
         keep.append(d)
     for d in keep:
         payload = {k: v for k, v in d.items() if k != "line_no"}
@@ -151,9 +229,10 @@ def import_extract(s: Session, src: Source, sf: SourceFile, blob: bytes, zip_cou
             FROM location l LEFT JOIN location_alias al ON al.location_id = l.id
             JOIN address a ON a.owner_type = 'location' AND a.owner_id = l.id AND a.zip5 = :z
             CROSS JOIN unnest(CAST(:names AS text[])) n
-            WHERE l.merged_into_id IS NULL
+            WHERE l.merged_into_id IS NULL AND l.county_fips = :c
             GROUP BY l.id HAVING max(greatest(similarity(l.name_norm, n), coalesce(similarity(al.alias_norm, n), 0))) >= :m
-            ORDER BY sim DESC LIMIT 2"""), {"z": d["zip5"], "names": names, "m": min_similarity}).all()
+            ORDER BY sim DESC LIMIT 2"""), {"z": d["zip5"], "names": names, "m": min_similarity,
+                                                "c": d["geo"]["county_fips"]}).all()
         if not cands:
             st.unmatched += 1
             continue
@@ -163,9 +242,13 @@ def import_extract(s: Session, src: Source, sf: SourceFile, blob: bytes, zip_cou
         lid = cands[0].id
         fact_ins = insert(Fact).values([{"subject_type": "location", "subject_id": lid, "field": "licence",
                     "value": {"licence_number": d["licence_number"], "type": d["licence_type"], "status": "active",
-                              "original": d["original_licence_date"], "expires": d["expiry_date"], "name_similarity": round(cands[0].sim, 3)},
+                              "original": d["original_licence_date"], "expires": d["expiry_date"], "name_similarity": round(cands[0].sim, 3),
+                              "geo_status": d["geo"]["status"], "geo_flags": d["geo"]["flags"],
+                              "geo_reason": d["geo"]["reason"], "county_code_map": COUNTY_CODE_MAP_STATUS},
                     "value_norm": d["licence_number"], "source_record_id": rid, "source_key": SOURCE_KEY, "provenance": "registry",
-                    "verification_state": "ingested", "confidence": round(0.9 * cands[0].sim, 3)}])
+                    "verification_state": "ingested",
+                    # flagged geography (code-only, ZIP-only, incomplete address) lowers confidence; never raises it
+                    "confidence": round(0.9 * cands[0].sim * (0.8 if d["geo"]["flags"] or d["geo"]["status"] != "agree" else 1), 3)}])
         # the same record version accepted again after an earlier withdrawal becomes current again
         s.execute(fact_ins.on_conflict_do_update(
             index_elements=["subject_type", "subject_id", "field", "value_norm", "source_record_id"],
@@ -199,5 +282,5 @@ def import_extract(s: Session, src: Source, sf: SourceFile, blob: bytes, zip_cou
             continue
         s.execute(text("UPDATE location_source_link SET active = false WHERE location_id = :l AND source_key = :k "
                        "AND external_id = :e"), {"l": lid, "k": SOURCE_KEY, "e": lic})
-    sf.records, sf.quarantined, sf.status = st.in_target, st.quarantined, "imported"
+    sf.records, sf.quarantined, sf.status, sf.parser_version = st.in_target, st.quarantined, "imported", PARSER_VERSION
     return st
