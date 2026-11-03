@@ -39,7 +39,9 @@ SELECT l.id, l.display_name, l.category, l.operating_status, l.chain_flag, l.cou
              WHERE ol.from_org_id = o.id AND ol.kind = 'dba_owned_by')))
             FROM location_organization lo JOIN organization o ON o.id = lo.organization_id
             WHERE lo.location_id = l.id AND lo.active), '[]') AS orgs,
-  EXISTS (SELECT 1 FROM area a WHERE a.kind = 'county' AND a.is_target AND a.enabled AND a.spec->>'geoid' = l.county_fips) AS in_target
+  EXISTS (SELECT 1 FROM area a WHERE a.kind = 'county' AND a.is_target AND a.enabled AND a.spec->>'geoid' = l.county_fips) AS in_target,
+  COALESCE((SELECT array_agg(DISTINCT f.value->>'licence_number') FROM fact f WHERE f.subject_type='location' AND f.subject_id=l.id
+            AND f.field IN ('licence', 'btr') AND f.superseded_at IS NULL), '{}') AS licences
 FROM location l
 WHERE l.merged_into_id IS NULL AND l.county_fips = ANY(:fips)
 ORDER BY l.id
@@ -96,7 +98,7 @@ def _score_batch(s, rows, cfg, versions, current, today, now, st):
                      platforms=[tuple(p) for p in r["platforms"]], phones=list(r["phones"]), emails=list(r["emails"]),
                      has_mail_address=r["has_mail_address"], sources=set(r["sources"]),
                      orgs=[{k: _d(v) for k, v in o.items()} for o in r["orgs"]], in_target=r["in_target"],
-                     last_seen=r["last_seen"], industry=industry)
+                     last_seen=r["last_seen"], industry=industry, licences=list(r["licences"]))
         h = hashlib.sha256(json.dumps([asdict(f), [h.__dict__ for h in hits], excl, versions], default=str, sort_keys=True)
                            .encode()).hexdigest()
         if current.get(r["id"]) == h:

@@ -178,6 +178,20 @@ def _run_locked(settings, engine, cfg, reg, guard, client, area_keys, since, unt
         else:
             _cov(s, run.id, "sunbiz", areas, "not_run", "disabled for this run")
 
+        # ---------------------------------------------------------------- DBPR licence evidence (M3)
+        dbpr_cfg = cfg["sources"]["sources"].get("dbpr")
+        if dbpr_cfg and dbpr_cfg.get("files"):
+            try:
+                counts["dbpr"] = _run_dbpr(s, client, settings, dbpr_cfg, target_fips)
+                _cov(s, run.id, "dbpr", areas, "complete", "licence evidence only; licences never create prospects", {})
+                s.commit()
+            except Exception as exc:  # noqa: BLE001
+                s.rollback()
+                log.exception("dbpr failed")
+                _cov(s, run.id, "dbpr", areas, "failed", f"{type(exc).__name__}: {exc}")
+                partial = True
+                s.commit()
+
         # ---------------------------------------------------------------- resolution + summary
         dst = dedupe_locations(s, sorted(target_fips))
         counts["dedupe"] = dst.__dict__
@@ -258,3 +272,26 @@ def summarize(s: Session, target_fips: set[str]) -> dict:
     return {"locations_per_county": per_county, "locations_by_status": status, "fact_verification_states": states,
             "verified_facts": states.get("verified", 0),
             "note": "Imported records are not verified business information; verification happens in later steps."}
+
+
+def _run_dbpr(s: Session, client: InfraClient, settings: Settings, dbpr_cfg: dict, target_fips: set[str]) -> dict:
+    from pathlib import Path
+
+    from app.sources.common import download_checked
+    from app.sources.dbpr.importer import import_extract
+    src = ensure_source(s, "dbpr", dbpr_cfg)
+    zc = load_zip_counties(client, settings.data_dir)
+    out = {}
+    for f in dbpr_cfg["files"]:
+        name = Path(f["url"]).name
+        dl = download_checked(client, f["url"], settings.data_dir / "dbpr" / name)
+        prev = s.execute(select(SourceFile).where(SourceFile.source_id == src.id, SourceFile.remote_path == f["url"],
+                                                  SourceFile.sha256 == dl.sha256, SourceFile.status == "imported")).scalar_one_or_none()
+        if prev is not None:
+            out[name] = {"reused": True}
+            continue
+        sf = register_file(s, src, kind="dbpr_licensees", remote_path=f["url"], dl=dl)
+        st = import_extract(s, src, sf, dl.path.read_bytes(), zc, target_fips)
+        out[name] = {k: (dict(v) if hasattr(v, "items") else v) for k, v in st.__dict__.items()}
+        s.commit()
+    return out

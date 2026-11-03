@@ -40,6 +40,10 @@ def main(argv: list[str] | None = None) -> int:
     ex.add_argument("--niche")
     ex.add_argument("--qualification", help="comma-separated: provisionally_qualified,needs_research,not_qualified")
     ex.add_argument("--limit", type=int, default=100000)
+    bt = sub.add_parser("import-btr", help="import a county business-tax-receipt CSV (manual export)")
+    bt.add_argument("path", type=Path)
+    bt.add_argument("--county", required=True, help="target area key, e.g. st_johns")
+    bt.add_argument("--mapping", required=True, help="YAML file mapping fields to CSV column names")
     args = ap.parse_args(argv)
     if args.cmd != "net-check":
         return _business(args)
@@ -110,6 +114,30 @@ def _business(args) -> int:
         print(json.dumps({"run_id": res.run_id, "status": res.status, "coverage": res.coverage, "counts": res.counts},
                          indent=2, default=str))
         return 0 if res.status == "completed" else 4
+    if args.cmd == "import-btr":
+        import yaml
+        from sqlalchemy import text
+        from sqlalchemy.orm import Session
+
+        from app.db.session import make_engine
+        from app.sources.btr.csv_import import import_btr_csv
+        from app.sources.common import Downloaded, ensure_source, register_file, sha256_file
+        engine = make_engine(settings)
+        mapping = yaml.safe_load(open(args.mapping, encoding="utf-8"))
+        with Session(engine) as s:
+            fips = s.execute(text("SELECT spec->>'geoid' FROM area WHERE key=:k"), {"k": args.county}).scalar()
+            if not fips:
+                print(f"unknown area {args.county}")
+                return 2
+            src = ensure_source(s, f"btr_{args.county}", {"name": f"{args.county} business tax receipts (manual CSV)",
+                                                          "licence": "Public record", "reliability": {"btr": 0.85}})
+            p = args.path
+            sf = register_file(s, src, kind="btr_csv", remote_path=f"manual:{p.name}",
+                               dl=Downloaded(p, sha256_file(p), p.stat().st_size, True))
+            st = import_btr_csv(s, src, sf, p.read_bytes(), mapping, fips)
+            s.commit()
+        print(json.dumps({k: v for k, v in st.__dict__.items()}, indent=2, default=str))
+        return 0
     if args.cmd in ("score", "report", "export"):
         from sqlalchemy import text
         from sqlalchemy.orm import Session

@@ -16,3 +16,12 @@ sources:
     licence: "Public domain (US Government)"
     attribution: "U.S. Census Bureau"
     reliability: {location: 0.8}
+  dbpr:
+    name: "Florida DBPR licensee extracts"
+    licence: "Public record (Florida, ch. 119 F.S.)"
+    attribution: "Florida Department of Business and Professional Regulation"
+    reliability: {licence: 0.9, name: 0.8, address: 0.5}
+    # Licensee files used as evidence (column meanings inferred - verification item V13)
+    files:
+      - {url: "https://www2.myfloridalicense.com/sto/file_download/extracts/CONSTRUCTIONLICENSE_1.csv", serves: [home_trades, pressure_washing]}
+      - {url: "https://www2.myfloridalicense.com/sto/file_download/extracts/COSMETOLOGYLICENSE_1.csv", serves: [general]}  # salons etc.; evidence only

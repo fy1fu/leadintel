@@ -35,6 +35,7 @@ class Features:
     in_target: bool
     last_seen: date | None
     industry: str | None = None
+    licences: list[str] = field(default_factory=list)   # active DBPR licences / current BTRs matched to this location
 
 
 @dataclass
@@ -83,6 +84,8 @@ def evidence(f: Features, cfg: dict, today: date) -> tuple[int, list[Factor]]:
         out.append(Factor("evidence", "open_listing", pts["open_listing"], {"overture_confidence": f.overture_confidence}, "directory"))
     if len(f.sources) >= 2:
         out.append(Factor("evidence", "multi_source", pts["multi_source"], {"sources": sorted(f.sources)}, "directory"))
+    if f.licences:
+        out.append(Factor("evidence", "active_licence_or_btr", pts["licence_or_btr"], {"licences": sorted(f.licences)[:5]}, "registry"))
     if f.phones:
         out.append(Factor("evidence", "phone_published", pts["phone"], {"count": len(f.phones)}, "directory"))
     if any(k in ("social", "link_hub") for _, k in f.platforms):
@@ -93,7 +96,7 @@ def evidence(f: Features, cfg: dict, today: date) -> tuple[int, list[Factor]]:
     if old:
         out.append(Factor("evidence", "registry_age_12m", pts["registry_age_12m"],
                           {"registered": min(o["registration_date"] for o in old).isoformat()}, "registry"))
-    # NOTE: a filing's own recency or kind earns no evidence (SCORING.md §4.3). Licences/BTR: M3. Reviews: manual, Phase 2.
+    # NOTE: a filing's own recency or kind earns no evidence (SCORING.md §4.3). Reviews: manual observations, Phase 2.
     return int(sum(x.effect for x in out)), out
 
 
