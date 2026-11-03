@@ -13,7 +13,7 @@ Status as of 2026-11-02. Items are closed only by a real request or a real data 
 | V7 | Duval BTR report export | Tax Collector page works; report portal shows a Cloudflare bot challenge (never bypassed) | No | Manual export or public-records request; decide per county |
 | V8 | NPI bulk files | Page reports "down for maintenance"; API works | No | Re-run diagnostics later |
 | V9 | Sunbiz HTTPS rate limits for bulk downloads | Only small requests made so far | No | Observe during the first quarterly download (resumable) |
-| V10 | v0.3 §8 content | The section arrived redacted; mockup generation (v0.3 Phase 4) has no specification | Phase 4 only | Resend §8 / specify mockups |
+| V10 | Clay and St. Johns County BTR data access | Not yet checked; Duval's report portal is behind a bot challenge | No (manual CSV import possible) | Check each county Tax Collector's published reports; public-records request where needed |
 | V11 | Review-count evidence from free sources | Overture has no review fields (verified). No permitted free bulk source identified. | No (manual entry planned) | Manual research fields, or Google Places after the [ROADMAP.md §4](ROADMAP.md) checklist |
 
 The v0.3 requirements are consolidated in [ROADMAP.md](ROADMAP.md).

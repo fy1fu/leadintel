@@ -1,6 +1,8 @@
 # Consolidated data model (v0.3)
 
-PostgreSQL + PostGIS, managed by Alembic from Phase 1. This merges the v0.1 schema, the v0.2 additions, the PR #1 network tables and the v0.3 requirements.
+PostgreSQL + PostGIS, managed by Alembic from Phase 1. This merges the v0.1 schema, the v0.2 additions and the v0.3 requirements, updated with the 2026-11-03 decisions.
+
+**Network diagnostics are not part of this database.** Their tables (`net_probe_result`, `net_event`) live in their own store (`LEADINTEL_NETDIAG_DB_URL`, default SQLite), so connectivity can be diagnosed when this database is down.
 
 Legend: 📋 already designed · 🆕 new in v0.3 · ✅ exists in PR #1
 
@@ -8,14 +10,14 @@ Legend: 📋 already designed · 🆕 new in v0.3 · ✅ exists in PR #1
 
 | Table | Status | Key columns / notes |
 |---|---|---|
-| `source` | 📋 | `key`, `cost_class`, `licence`, `attribution`, `enabled` |
+| `source` | 📋 + 🆕 | `key`, `cost_class`, `licence`, `attribution`, `enabled`. **New:** `reliability` (default per field group, from `config/sources.yaml`), `reliability_notes` |
 | `source_record` | 📋 + 🆕 | `source`, `external_id`, `fetched_at`, `payload`, `payload_hash`, `licence_tag`. **New:** `raw_line` (bytes), `file_name`, `line_no`, `file_sha256`, so every Sunbiz/DBPR lead reproduces its original line. |
 | `source_file` | 🆕 | `source`, `kind` (`cor` / `cor_event` / `fic` / `fic_event` / `quarterly` / `dbpr` …), `logical_date`, `remote_path`, `size`, `remote_last_modified`, `sha256`, `status` (`verified` / `failed` / `superseded`), `records`, `quarantined` |
 | `source_date_ledger` | 🆕 | `source`, `kind`, `date`, `state` (`verified` / `not_yet_published` / `absent_holiday` / `absent_unexplained` / `failed`), `checked_at`. Drives coverage for date filters. |
 | `quarantine_record` | 🆕 | `source_file_id`, `line_no`, `raw_line`, `reason`, `field` |
-| `fact` | 📋 | Per-field provenance: `provenance` ∈ verified / directory / website / registry / inferred / **user** 🆕; `observed_at`, `last_verified_at`, `confidence` |
+| `fact` | 📋 + 🆕 | Per-field provenance: `provenance` ∈ directory / website / registry / inferred / **manual** 🆕; `observed_at`, `fetched_at`, `last_verified_at`, `confidence`. **New:** `verification_state` ∈ `ingested` / `corroborated` / `verified` / `conflicting` / `stale`, and `ttl_days`. Ingestion alone never sets `verified`. |
 | `coverage` | 📋 | Source × area × filter → `complete` / `partial` / `failed` / `not_run` / `unsupported` |
-| `net_probe_result`, `net_event` | ✅ | From PR #1; moved into the first Alembic migration |
+| `net_probe_result`, `net_event` | ✅ | From PR #1. **Stay in the separate diagnostics store; not migrated here.** |
 | `cost_ledger` | 📋 | Every provider call, including $0 ones; paid approvals |
 
 ## 2. Businesses
@@ -26,11 +28,12 @@ Legend: 📋 already designed · 🆕 new in v0.3 · ✅ exists in PR #1
 | `organization_link` | 🆕 | `from_org`, `to_org`, `kind` (`dba_owned_by`, `successor_of`, `same_entity_as`), `evidence` (e.g. `own_charter = L26…`), `confidence` |
 | `person_role` | 🆕 | Officer / owner / registered agent. Name kept only as needed for linking; **not surfaced as a lead contact**. |
 | `address` | 🆕 | `owner_type`, `owner_id`, `role` (`principal` / `mailing` / `registered_agent` / `owner` / `listing`), normalized fields, `geom`, `county_fips`, `geocode_method`, `is_operating_location` (false for RA and mass-filer addresses), `shared_count` |
-| `location` | 📋 | The prospect unit: `display_name`, `geom`, `county_fips`, `place_fips`, `cbsa`, `industry_profile`, `chain_flag`, `operating_status`, `first_seen_at` |
+| `location` | 📋 + 🆕 | The prospect unit: `display_name`, `geom`, `county_fips`, `place_fips`, `cbsa`, `industry_profile`, `chain_flag`, `operating_status`, `first_seen_at`. **New:** `completeness` (missing / unverified / conflicting key fields) |
+| `target_area` | 📋 + 🆕 | Configured targets from `config/areas.yaml` (initially Duval, St. Johns, Clay counties): type (county / city / ZIP / radius / polygon / state), geometry, enabled |
 | `location_alias` | 🆕 | Trade names, DBA names, listing names |
 | `location_source_link` | 📋 | `match_score`, `method`, `confirmed_by` |
 | `review_queue` | 📋 | Merge / association decisions |
-| `manual_observation` | 🆕 | User-entered research, e.g. review count, rating, listing URL, observed date, screenshot reference. Feeds `fact` with `provenance = user`. |
+| `manual_observation` | 🆕 | User-entered research: `listing_url`, `platform` (google / facebook / yelp / nextdoor / other), `review_count`, `rating` (nullable), `observed_at`, `observed_by`, `verification_status` (`unverified` / `checked_twice` / `disputed`), `note`. Feeds `fact` with `provenance = manual`. **Never refreshed automatically**; the UI and exports label it *manually observed* and show its age. |
 
 ## 3. Online presence and websites
 
@@ -59,8 +62,8 @@ Legend: 📋 already designed · 🆕 new in v0.3 · ✅ exists in PR #1
 |---|---|---|
 | `campaign` | 🆕 | `name`, `industry_profile`, `area_id`, `target_size` (default 25), `status`, `created_at` |
 | `campaign_member` | 🆕 | `campaign_id`, `location_id`, `rank`, `included_reason`, `score_snapshot` (frozen) |
-| `lead` | 📋 → 🆕 | **Status set replaced:** new, qualified, researching, mockup_created, ready_to_contact, contacted, follow_up_required, replied, interested, meeting_scheduled, proposal_sent, negotiating, won, lost, not_interested, do_not_contact. Mapping from v0.1: `saved` → `qualified`, `reviewed` → `researching`, `contacted` → `contacted`, `interested` → `interested`, `not_interested` → `not_interested`, `excluded` → `do_not_contact` (with reason). |
-| `contact_event` | 🆕 | `lead_id`, `channel` (email / phone / in_person / mail), `direction`, `occurred_at`, `summary`, `outcome`, `logged_by`. **Manual only.** |
+| `lead` | 📋 → 🆕 | **Status set replaced:** new, qualified, researching, ready_to_contact, contacted, follow_up_required, replied, interested, meeting_scheduled, proposal_sent, negotiating, won, lost, not_interested, do_not_contact. Mapping from v0.1: `saved` → `qualified`, `reviewed` → `researching`, `contacted` → `contacted`, `interested` → `interested`, `not_interested` → `not_interested`, `excluded` → `do_not_contact` (with reason). |
+| `contact_event` | 🆕 | `lead_id`, `channel` (phone / email / mail / in_person), `direction`, `occurred_at`, `summary`, `outcome`, `notes`, `logged_by`. **Manual logging only; there is no sending, dialing or messaging integration.** |
 | `follow_up` | 🆕 | `lead_id`, `due_at`, `action`, `done_at` |
 | `do_not_contact` | 🆕 | `location_id` / phone / email / address, `reason`, `source`, `added_at`. Enforced before any contact can be logged as planned. |
 | `package`, `package_item` | 🆕 | User-defined: setup price, hosting / month, maintenance / month, included updates, add-ons, estimated cost. No defaults hard-coded. |

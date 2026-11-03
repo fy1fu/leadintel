@@ -395,7 +395,7 @@ Implemented ahead of Phase 1. Full details: [NETWORK.md](NETWORK.md).
 - Business-website crawling uses a separate SSRF-protected client.
 - Paid providers are blocked and the number of paid requests is reported (0).
 
-## 13. Open items for you
+## 13. Open items for you — superseded by [ROADMAP.md §5](ROADMAP.md)
 
 1. **Hardware for local AI:** do you have a GPU, and how much VRAM? About 8 GB runs a capable vision model; without one, the `none` provider is used and subjective criteria are marked "not assessed".
 2. **Foursquare OS Places:** willing to create a free Hugging Face account and accept the gated-access form? Optional; adds a third places source.

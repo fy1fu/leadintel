@@ -1,6 +1,6 @@
 # LeadIntel consolidated roadmap (v0.3)
 
-Status: **proposal for review, 2026-11-02.** No Phase 1 code has been written. This merges three sets of requirements into one roadmap:
+Status: **proposal for review, updated 2026-11-03 with your decisions (§5).** No Phase 1 code has been written, and Phase 1 starts only after you approve the implementation sequence (§2). This merges three sets of requirements into one roadmap:
 - the original brief (v0.1);
 - the free-first architecture (v0.2, [PLAN.md](PLAN.md));
 - the network layer in PR [fy1fu/leadintel#1](https://github.com/fy1fu/leadintel/pull/1), not yet merged;
@@ -66,7 +66,7 @@ Where a v0.3 requirement *extends* a planned component, it is listed as 📋 + �
 | Facebook-only, Instagram-only, social-only, directory-only presence | 📋 + 🆕 | v0.2 had a single "social-only" flag. v0.3 needs a separate **presence type** axis (SCORING.md §1). |
 | "Reasonably good" vs "outdated" website | 📋 | WQS bands (v0.1) mapped to presence categories |
 | Free evidence that a business is established | 🆕 | Overture multi-source confirmation and open status, DBPR licence original-issue date, BTR, Sunbiz formation date, Wayback first-seen, social profile presence. **Verified 2026-11-02:** Overture lists social-only or no-web/no-social businesses in every target niche, nearly all with phones (SCORING.md §1.3). |
-| Listing with reviews, review count and rating | 🆕 + 🔭 | **Not available from any free source we use**; Overture has no review fields (verified). Options: (a) **manual research fields**: the user records review count and rating from a listing they viewed, stored with `provenance = user` and a date; (b) Google Places adapter (paid, optional, §1.11). Scraping Google or Yelp is excluded (terms of service). |
+| Listing with reviews, review count and rating | 🆕 (manual) + 🔭 (paid) | **Not available from any free source we use**; Overture has no review fields (verified). **Decided:** manual observations. Each one stores listing URL, platform, review count, rating (optional), observation date, who observed it and a verification status. It is labelled *manually observed* everywhere it appears and **is never refreshed automatically**; it shows its age ("observed 41 days ago"). Google Places stays optional (§1.11). Scraping Google or Yelp is excluded (terms of service). |
 
 ### 1.4 Scoring model — v0.3 §4
 
@@ -87,6 +87,7 @@ Where a v0.3 requirement *extends* a planned component, it is listed as 📋 + �
 | Initial niches (home services, mobile/automotive, marine/coastal) | 🆕 | Seed profiles with taxonomy mappings to Overture categories, OSM tags, DBPR licence types and BTR occupation codes |
 | Compare lead quality by industry; industries with most no-website businesses; highest average BOS | 📋 + 🆕 | v0.2 coverage dashboard has industry coverage. Add opportunity aggregates per industry. |
 | Track replies and sales by industry; learn conversion rates | 🆕 | Depends on CRM (§1.9) and analytics (§1.10) |
+| **Niche comparison report** (decided: no niche fixed yet; cleaning and landscaping first candidates) | 🆕 | Side-by-side per niche and area: businesses discovered; no independent website; social-only; outdated website; qualified prospects; average BOS and LPS; contact availability (phone / email / form / mail-only); confidence and source completeness. **No automatic winner and no ranking by size.** Each metric shows its coverage, so a niche with incomplete discovery isn't compared as if it were complete. Counts become available in stages: discovery in Phase 1, presence in Phase 2, scores in Phase 3. |
 
 ### 1.6 First-campaign workflow — v0.3 §6
 
@@ -105,9 +106,9 @@ Where a v0.3 requirement *extends* a planned component, it is listed as 📋 + �
 | Competitors' presence when the prospect has no website | 🆕 | Peer presence distribution, e.g. "18 of 24 local pressure-washing businesses have their own site" |
 | No claims of specific revenue increases | 🆕 | Report wording rule plus a test: gap statements are factual comparisons only |
 
-### 1.8 v0.3 §8
+### 1.8 v0.3 §8 and website generation
 
-**Section 8 arrived redacted.** Nothing has been assumed for it. Phase 4 in the v0.3 priorities lists *website mockup generation*, which has no specification elsewhere; it is held as 🆕 **needs specification** (§2, Phase 4).
+Section 8 arrived redacted and nothing has been assumed for it. **Decided: website generation and mockup functionality are out of scope.** They are neither planned nor optional features. The analysis still produces *recommended website improvements* and *competitor gap tables* (descriptions, not generated sites).
 
 ### 1.9 Service packages, recurring revenue and CRM — v0.3 §9–10
 
@@ -115,7 +116,7 @@ Where a v0.3 requirement *extends* a planned component, it is listed as 📋 + �
 |---|---|---|
 | Basic lead statuses, notes, lists | 📋 | v0.1 lead management |
 | Full pipeline statuses (New lead … Do not contact), contact history, follow-ups, next action, proposal / expected / actual value, MRR, reason lost | 🆕 | Replaces the v0.1 status set; old values map to new ones (DATA_MODEL.md §5) |
-| Manually tracked channels: email, phone, in-person, mail | 🆕 | `contact_event` log; **no automated sending or calling** |
+| Manually tracked channels: phone, email, physical mail, in-person visit | 🆕 | `contact_event` log, follow-up dates, notes, outcomes. **Decided: manual outreach only.** No automated bulk email, automated calls or unsolicited messaging, and no sending integrations. |
 | Outreach compliance safeguards | 🆕 | Do-not-contact list enforced everywhere; per-channel consent / basis notes; contact-frequency limits; warnings for phone/SMS outreach (federal TCPA, the Florida Telephone Solicitation Act and the National Do Not Call Registry) and email (CAN-SPAM). These are product safeguards, not legal advice. |
 | Configurable service packages (one-page site, hosting, maintenance, GBP setup, SEO …) and pricing | 🆕 | `package` / `package_item`; no hard-coded prices |
 | GBP setup requires owner authorization | 🆕 | A package item cannot be marked delivered without a recorded owner-authorization note |
@@ -151,6 +152,18 @@ Where a v0.3 requirement *extends* a planned component, it is listed as 📋 + �
 | DBPR, Duval BTR, NPI adapters | 📋 (endpoints verified; Duval report portal behind a bot challenge) |
 | Local AI provider (Ollama) / `none` provider | 📋 |
 | Coverage dashboard | 📋 |
+| Configurable geography: counties, cities, ZIP codes, radius, polygons, other states | 📋 + 🆕 | v0.2 area resolver on TIGER boundaries. **Decided initial targets: Duval, St. Johns and Clay counties.** Targets are configuration (`config/areas.yaml`), not code; adding a Florida county is config plus any county-specific record adapter (e.g. BTR). Other states need their own registry adapters (Sunbiz is Florida-only); Overture, OSM, NPI and Census work nationwide. |
+| Network diagnostics runnable without the main database | ✅ | Own store (`LEADINTEL_NETDIAG_DB_URL`), memory fallback, `--no-store`; tested |
+
+### 1.13 Data quality (emphasized in the 2026-11-03 decisions)
+
+| Requirement | Status | Design |
+|---|---|---|
+| Successful ingestion ≠ verified business information | 🆕 | Each fact carries a **verification state**: `ingested` (one source) → `corroborated` (≥ 2 independent sources agree) → `verified` (confirmed on the business's own site or by the user) → `conflicting` / `stale`. The UI and exports show the state next to every contact field. An import's success counts are reported separately from verified-field counts. |
+| Source reliability | 📋 + 🆕 | Per-source reliability defaults in `config/sources.yaml` (e.g. registry filing fields high; listing websites medium until verified; inferred fields low). They are used in field confidence and documented, not hidden. |
+| Field-level confidence and timestamps | 📋 | `fact` rows: `observed_at`, `fetched_at`, `last_verified_at`, `confidence`, provenance |
+| Incomplete records tracked | 🆕 | `completeness` per location (which key fields are missing, unverified or conflicting). Quarantined source lines are counted per import. Incomplete records stay visible but are labelled; they are never silently dropped or padded with guesses. |
+| Staleness | 📋 + 🆕 | Per-field TTLs drive refresh; facts past their TTL become `stale` and lower LPS actionability. Manual observations are never auto-refreshed (§1.3). |
 
 ---
 
@@ -160,7 +173,8 @@ The v0.3 priority order is adopted. Each phase ends with real-data acceptance te
 
 ### Phase 1 — Discovery and qualification
 1. **Foundation** (v0.2):
-   - Postgres + PostGIS + Alembic. The PR #1 `net_*` tables move into the first migration.
+   - Postgres + PostGIS + Alembic for the **business** database. Network diagnostics keep their own independent store (PR #1) and are not migrated into it.
+   - `config/areas.yaml` with Duval, St. Johns and Clay.
    - TIGER boundaries; area resolver.
    - `SourceAdapter` interface with coverage records; provenance `fact` model; cost guard wiring.
 2. **Sunbiz adapter** (corporate + fictitious name + both event files):
@@ -173,14 +187,18 @@ The v0.3 priority order is adopted. Each phase ends with real-data acceptance te
 5. **Entity resolution v1**: organization / location / alias, DBA edges, review queue.
 6. **Keyword engine + industry targeting v1**: `keywords.yaml`, `industries/*.yaml` with the initial niches.
 7. **County filtering, CSV export, minimal map + list UI** (v0.2), so results are inspectable.
+8. **Data-quality layer**: fact verification states, source reliability, completeness flags, quarantine counts in coverage.
+9. **Niche comparison report v1** (discovery-level metrics for cleaning and landscaping across the three counties).
 
 **Acceptance criteria:**
-- Duval + St. Johns imports reproduce every source line from the database.
+- Duval, St. Johns and Clay imports reproduce every source line from the database.
 - A rerun creates 0 duplicates.
 - A DBA owned by an LLC shows as one business with both filings.
 - Registered-agent addresses never appear as operating locations.
 - A day with a missing file shows coverage `partial`, never "no new businesses".
 - Malformed lines land in quarantine.
+- Import success counts are never presented as verified-business counts.
+- Network diagnostics still run with the business database stopped.
 - 0 paid calls.
 
 ### Phase 2 — Website and online-presence research
@@ -188,7 +206,8 @@ The v0.3 priority order is adopted. Each phase ends with real-data acceptance te
 - **Presence classification** (two axes, SCORING.md §1): Facebook / Instagram / social / directory-only.
 - Polite crawler on the ✅ safe-egress client: robots.txt, page selection, Lighthouse, axe.
 - WQS with the `none` provider (v0.2).
-- **Manual research fields** for listing / review data with provenance.
+- **Manual observations** for listing / review data: labelled, dated, never auto-refreshed.
+- Niche comparison gains presence metrics (no website, social-only, outdated).
 - Website discovery confidence and the "investigation incomplete" state.
 
 **Acceptance:** association precision ≥ 0.97 on a labelled sample; no Facebook URL ever counted as an independent website; fixture sites A/B/B′/C scored as specified.
@@ -199,13 +218,18 @@ The v0.3 priority order is adopted. Each phase ends with real-data acceptance te
 - BOS / LPS with the factor ledger and operating-evidence gate.
 - Optional local AI (Ollama) for subjective criteria, behind calibration.
 
-**Acceptance:** scoring invariants (SCORING.md §7) pass; repeat scoring is identical for unchanged inputs; every score displays its factors and evidence.
+**Acceptance:**
+- Scoring invariants (SCORING.md §7) pass, **including the explicit test that a new LLC with a recent filing and no trading evidence never outranks an established business**.
+- Repeat scoring is identical for unchanged inputs.
+- Every score displays its factors and evidence.
+- The niche comparison gains average BOS / LPS and qualified-prospect counts.
 
 ### Phase 4 — Sales workflow
-- Campaigns and the first-campaign wizard (niche + area → 20–30 shortlist).
+- Campaigns and the first-campaign wizard (niche + area → 20–30 shortlist). The user chooses the niche using the comparison report.
 - Campaign-ready export.
-- CRM pipeline, contact log, follow-ups, do-not-contact enforcement.
-- **Website mockups — needs specification** (see §1.8). Free-first default would be static templates filled from verified public data, clearly marked as concept mockups.
+- CRM pipeline, contact history, follow-up dates, notes, outcomes.
+- Do-not-contact enforcement across all four manual channels (phone, email, mail, in-person).
+- No automated messaging of any kind.
 
 ### Phase 5 — Business performance
 - Service packages and deals.
@@ -215,6 +239,7 @@ The v0.3 priority order is adopted. Each phase ends with real-data acceptance te
 
 ### Later / optional (🔭)
 - Google Places adapter (after the §4 checklist).
+- *Not planned at all:* website generation, mockups, automated outreach.
 - Foursquare OS Places.
 - Additional counties and states.
 - Self-hosted PMTiles.
@@ -233,6 +258,9 @@ The v0.3 priority order is adopted. Each phase ends with real-data acceptance te
 | Reviews treated as unavailable by default | No free source we use provides them (verified); manual entry or the paid adapter only |
 | BOS gains an **operating-evidence gate** | v0.3: "no website" must not produce a high score on its own |
 | Corporate location from principal address + ZIP, not the state field | Principal state is blank in all daily records checked |
+| Network diagnostics keep a separate store instead of moving into the business database | Decided 2026-11-03: diagnostics must work when the main database doesn't |
+| Website generation / mockups removed from scope | Decided 2026-11-03 |
+| No niche is fixed; a comparison report decides | Decided 2026-11-03 |
 
 ---
 
@@ -250,13 +278,27 @@ All steps must be completed and recorded before `allow_paid` can be set for `goo
 
 ---
 
-## 5. Decisions needed before Phase 1
+## 5. Decisions
 
-| # | Decision | Recommendation |
-|---|---|---|
-| D1 | Phase 1 counties | Duval + St. Johns (others later, per county BTR availability) |
-| D2 | First niche for the campaign workflow | Pressure washing or lawn/landscaping. Pressure washing is small in central-Jacksonville Overture data (32 open), so cleaning or landscaping gives a larger pool. Compare after Phase 1 import. |
-| D3 | Manual review-count entry | Yes. It's the only free, terms-compliant way to use review evidence. |
-| D4 | Merge PR #1 before Phase 1 | Yes. This roadmap builds on it. |
-| D5 | Section 8 (redacted) and mockup requirements | Please resend or specify |
-| D6 | Outreach channels to support first | Manual phone and email logging + physical mail; no automation |
+### Recorded (2026-11-03)
+
+| # | Decision |
+|---|---|
+| D1 | Initial geography: **Duval, St. Johns and Clay** counties; geography stays configurable (counties, cities, ZIP codes, other states later). |
+| D2 | **No niche fixed yet.** Cleaning and landscaping are the first candidates; choose after the comparison report on real discovery results. Size alone is not a criterion. |
+| D3 | **Manual review observations: yes.** Labelled, dated, with a verification status, never auto-refreshed. |
+| D4 | PR #1 may be merged **after code review and Windows testing**; secret audit done (clean). Phase 1 builds on the network layer and does not replace it. |
+| D5 | v0.3 §8 redacted; **website generation and mockups are out of scope.** |
+| D6 | **Manual outreach only:** phone, email, physical mail, in-person. Contact history, follow-ups, notes, outcomes, do-not-contact enforcement, pipeline. No automated bulk email, calls or unsolicited messaging. |
+| D7 | Data quality: ingestion ≠ verification; source reliability, field confidence, timestamps and completeness tracked (§1.13). |
+| D8 | BOS cap for records without trading evidence is preserved and tested explicitly. |
+| D9 | Network diagnostics must run independently of the business database (implemented in PR #1). |
+
+### Still open
+
+| # | Item |
+|---|---|
+| O1 | **Your approval of the implementation sequence (§2).** Phase 1 does not start before it. |
+| O2 | Code review and Windows test run of PR #1 (procedure in PR #1 and `SUNBIZ.md` §7). |
+| O3 | Clay County BTR availability. Duval's portal is behind a bot challenge; St. Johns and Clay not yet checked. This decides automated vs manual-CSV BTR import per county. |
+| O4 | Verification items V1–V9 and V11 in [VERIFICATION.md](VERIFICATION.md). |

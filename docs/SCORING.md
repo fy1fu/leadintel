@@ -164,7 +164,7 @@ Evidence points, each with its source:
 | Active DBPR licence or current BTR | 2 |
 | Phone number published | 1 |
 | Social profile | 1 |
-| Reviews recorded (manual or paid source) | 2 |
+| Reviews recorded (manual observation ≤ 180 days old, or paid source) | 2 |
 | Registry entity ≥ 12 months old with no dissolution | 1 |
 
 | Total evidence | BOS cap |
@@ -205,6 +205,12 @@ bands: High ≥ 70 · Medium 45–69 · Low < 45      (configurable)
 - **contact_completeness** counts only published contact data, weighted by channel: phone 0.5, email 0.3, website contact form 0.2. A mailing address alone gives 0.2; it enables mail outreach only.
 - **Sunbiz-only leads usually have no phone or email**, so their LPS stays low until another source corroborates them. This is intended.
 
+### Manual observations in scores
+
+- Manual review counts and ratings count as evidence only while ≤ 180 days old (configurable).
+- Each one appears in the factor ledger as *manually observed on <date>*, never as collected data.
+- Older observations stay visible but stop contributing until the user re-checks them; the app never refreshes them itself.
+
 ### Factor ledger (explainability)
 
 Every score writes one row per factor, and the lead profile shows them all:
@@ -221,8 +227,8 @@ Every score writes one row per factor, and the lead profile shows them all:
 
 ## 7. Scoring invariants (automated tests)
 
-1. An established business with ≥ 40 recorded reviews, an active listing and no independent website **outranks** a new LLC with no operating evidence (BOS and LPS).
-2. A record with no operating evidence never exceeds BOS 35.
+1. An established business with ≥ 40 recorded reviews, an active listing and no independent website **outranks** a new LLC with no operating evidence (BOS and LPS), **however recent the LLC's filing**. Recency and DBA bonuses are applied inside the evidence gate, so they can never lift a no-evidence record past the cap. This is tested explicitly.
+2. A record with no operating evidence never exceeds BOS 35, including with every registry bonus applied (fresh DBA, positive keywords).
 3. No website ⇒ WQS = N/A (never 0). Inaccessible ⇒ N/A.
 4. A Facebook-only business never has `website_status = confirmed`.
 5. Negative keywords alone never remove a lead. Only `hard_exclude` does, and it records a reason.
