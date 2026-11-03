@@ -20,6 +20,23 @@ def pytest_collection_modifyitems(config, items):
 TEST_DB_URL = os.environ.get("LEADINTEL_TEST_DATABASE_URL")
 
 
+def _refuse_non_test_database(engine) -> None:
+    """The fixtures below drop and truncate tables: stop the whole run unless this is clearly a test database."""
+    from sqlalchemy import text
+    from sqlalchemy.engine import make_url
+    with engine.connect() as c:
+        name = c.execute(text("SELECT current_database()")).scalar()
+    if not name.endswith("_test"):
+        pytest.exit(f"refusing to reset database {name!r}: LEADINTEL_TEST_DATABASE_URL must name a database "
+                    "whose name ends in '_test'", returncode=3)
+    business = os.environ.get("LEADINTEL_DATABASE_URL")
+    if business:
+        b, t = make_url(business), make_url(TEST_DB_URL)
+        if (b.host or "localhost", b.port or 5432, b.database) == (t.host or "localhost", t.port or 5432, t.database):
+            pytest.exit("refusing to reset the test database: it is the same database as LEADINTEL_DATABASE_URL",
+                        returncode=3)
+
+
 @pytest.fixture(scope="session")
 def pg_engine():
     """Migrated Postgres+PostGIS test database (skipped when LEADINTEL_TEST_DATABASE_URL is unset)."""
@@ -34,11 +51,17 @@ def pg_engine():
     cfg.set_main_option("sqlalchemy.url", TEST_DB_URL)
     engine = create_engine(TEST_DB_URL, future=True)
     from sqlalchemy import text
-    with engine.begin() as c:  # fresh schema each session (downgrade would refuse to drop file-version history)
-        c.execute(text("DROP SCHEMA public CASCADE"))
-        c.execute(text("CREATE SCHEMA public"))
-        c.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
-        c.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+    from app.db.models import Base
+    _refuse_non_test_database(engine)
+    # Fresh schema each session (downgrade would refuse to drop file-version history). Drop only LeadIntel's
+    # own tables - never the schema or the PostGIS / pg_trgm extensions: PostGIS can only be (re)created by a
+    # superuser, and the documented setup (WINDOWS_SETUP.md) runs tests as a regular database user.
+    ours = {t.name for t in Base.metadata.sorted_tables} | {"alembic_version"}
+    with engine.begin() as c:
+        existing = set(c.execute(text("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")).scalars())
+        drop = sorted(ours & existing)
+        if drop:
+            c.execute(text("DROP TABLE " + ", ".join(f'public."{t}"' for t in drop) + " CASCADE"))
     command.upgrade(cfg, "head")
     yield engine
     engine.dispose()
