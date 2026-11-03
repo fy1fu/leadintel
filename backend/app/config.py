@@ -51,11 +51,15 @@ class Settings:
         return self.config_dir / "network.yaml"
 
     @property
-    def db_url(self) -> str:
-        if self.database_url:
-            return self.database_url
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-        return f"sqlite:///{self.data_dir / 'leadintel.db'}"
+    def business_db_url(self) -> str:
+        """Business database (PostgreSQL + PostGIS). Never used by network diagnostics."""
+        if not self.database_url:
+            raise RuntimeError("LEADINTEL_DATABASE_URL is not set (e.g. postgresql+psycopg://user@localhost:5432/leadintel)")
+        return self.database_url
+
+    @property
+    def defaults_dir(self) -> Path:
+        return self.config_dir / "defaults"
 
     @property
     def netdiag_url(self) -> str:

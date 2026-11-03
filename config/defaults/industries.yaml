@@ -1,0 +1,40 @@
+# Industry / niche profiles (one profile per niche; targeting + mapping now, benchmark section in Phase 3).
+# priority orders work and default sorting only - it never changes BOS/LPS (F9).
+version: 1
+profiles:
+  cleaning:
+    name: "Cleaning services"
+    enabled: true
+    priority: 1
+    keyword_groups: [cleaning]
+    overture_taxonomy: ["cleaning", "house_cleaning", "janitorial", "maid", "carpet_cleaning", "window_cleaning", "pressure_washing"]
+  landscaping:
+    name: "Lawn care & landscaping"
+    enabled: true
+    priority: 1
+    keyword_groups: [lawn_landscaping]
+    overture_taxonomy: ["landscaping", "lawn_service", "gardener", "tree_service", "irrigation"]
+  pressure_washing:
+    name: "Pressure washing"
+    enabled: true
+    priority: 2
+    keyword_groups: [pressure_washing]
+    overture_taxonomy: ["pressure_washing", "power_washing"]
+  home_trades:
+    name: "Home services & trades"
+    enabled: true
+    priority: 3
+    keyword_groups: [handyman_repair, junk_moving, pest, trades, pool]
+    overture_taxonomy: ["handyman", "home_repair", "remodeling", "flooring", "painting", "fence", "gutter", "junk_removal", "moving", "pest_control", "roofing", "hvac", "plumbing", "electrician", "pool_cleaning", "septic"]
+  mobile_automotive:
+    name: "Mobile & automotive"
+    enabled: true
+    priority: 3
+    keyword_groups: [mobile_auto]
+    overture_taxonomy: ["car_wash", "auto_detailing", "window_tinting", "auto_repair", "mobile_mechanic"]
+  marine:
+    name: "Marine & coastal"
+    enabled: true
+    priority: 3
+    keyword_groups: [marine]
+    overture_taxonomy: ["boat", "marine", "fishing_charter", "boat_service", "boat_repair"]

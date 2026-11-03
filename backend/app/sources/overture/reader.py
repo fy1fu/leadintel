@@ -108,6 +108,7 @@ class ReadStats:
     row_groups_total: int = 0
     bytes_read: int = 0
     services_used: set[str] = field(default_factory=set)
+    file_sizes: dict[str, int] = field(default_factory=dict)   # relative path -> remote size
 
 
 class OvertureReader:
@@ -164,6 +165,7 @@ class OvertureReader:
                 tables.append(t.filter(mask))
                 stats.row_groups_read += len(keep)
             stats.files += 1
+            stats.file_sizes[rel] = f.size
             stats.bytes_read += f.bytes_read
             stats.services_used.add(f.services[min(f._i, len(f.services) - 1)].key)
         if self.store:

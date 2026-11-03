@@ -6,13 +6,22 @@ requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.115",
   "uvicorn>=0.32",
-  "httpx>=0.28",
-  "httpcore>=1.0.7",
+  "httpx>=0.28,<0.29",
+  "httpcore>=1.0.7,<1.1",
   "pydantic>=2.9",
   "pyyaml>=6.0",
   "sqlalchemy>=2.0.36",
   "paramiko>=3.5",
   "pyarrow>=18",
+  "psycopg[binary]>=3.2",
+  "alembic>=1.14",
+  "geoalchemy2>=0.16",
+  "shapely>=2.0",
+  "pyshp>=2.3",
+  "phonenumbers>=8.13",
+  "usaddress>=0.5.10",
+  "rapidfuzz>=3.10",
+  # Pinned minor versions: app/net/safe_egress.py installs its DNS-pinning backend via httpx internals (review R1)
 ]
 
 [project.optional-dependencies]
@@ -31,4 +40,5 @@ include = ["app*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["live: performs real network requests (opt-in with LEADINTEL_LIVE_TESTS=1)"]
+filterwarnings = ["ignore::DeprecationWarning:starlette"]
 timeout = 120

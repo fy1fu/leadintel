@@ -1,0 +1,18 @@
+# Source reliability defaults (0..1) per field group. Used in field confidence; documented, not hidden.
+version: 1
+sources:
+  overture:
+    name: "Overture Maps Places"
+    licence: "CDLA-Permissive-2.0 / Apache-2.0 / CC0 (per record)"
+    attribution: "© Overture Maps Foundation and contributors"
+    reliability: {name: 0.8, category: 0.6, location: 0.8, phone: 0.6, website: 0.5, social: 0.5, email: 0.4, operating_status: 0.6}
+  sunbiz:
+    name: "Florida Division of Corporations (Sunbiz) bulk data"
+    licence: "Public record (Florida)"
+    attribution: "Florida Department of State, Division of Corporations"
+    reliability: {name: 0.95, filing: 0.95, status: 0.9, address: 0.7}
+  census_geocoder:
+    name: "US Census Geocoder"
+    licence: "Public domain (US Government)"
+    attribution: "U.S. Census Bureau"
+    reliability: {location: 0.8}

@@ -1,0 +1,15 @@
+# Target geography (F1: seed defaults; the active, versioned copy lives in the business DB).
+version: 1
+boundaries:
+  county:
+    url: "https://www2.census.gov/geo/tiger/GENZ2025/shp/cb_2025_us_county_500k.zip"
+    id_field: GEOID
+    name_field: NAMELSAD
+  place_fl:
+    url: "https://www2.census.gov/geo/tiger/GENZ2025/shp/cb_2025_12_place_500k.zip"
+    id_field: GEOID
+    name_field: NAMELSAD
+targets:
+  - {key: duval,     kind: county, geoid: "12031", name: "Duval County, FL",     enabled: true}
+  - {key: st_johns,  kind: county, geoid: "12109", name: "St. Johns County, FL", enabled: true}
+  - {key: clay,      kind: county, geoid: "12019", name: "Clay County, FL",      enabled: true}

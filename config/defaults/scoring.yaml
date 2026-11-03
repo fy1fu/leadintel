@@ -1,0 +1,16 @@
+# Scoring defaults (SCORING.md). Changes to this kind require approval and are reversible.
+version: 1
+bos_weights: {website_need: 0.30, business_value: 0.15, acquisition_dependence: 0.15, competitive_pressure: 0.15, establishment: 0.25}
+targeting_adjustment: {min: -30, max: 20}
+entity_type_effects: {fictitious_name_new: 10, fictitious_name_of_established: 6, llc: 0, corporation: 0, foreign: -3, nonprofit: -8, registered_agent_address: -10}
+evidence_points: {open_listing: 2, multi_source: 1, licence_or_btr: 2, phone: 1, social_profile: 1, reviews_manual_or_paid: 2, registry_age_12m: 1}
+evidence_caps: {"0": 35, "1": 60, "2": 60}
+overture_min_confidence_for_open: 0.6
+manual_observation_max_age_days: 180
+lps: {weights: {contact: 0.35, verification: 0.25, assessment: 0.25, freshness: 0.15}, floor: 0.4,
+      channel_weights: {phone: 0.5, email: 0.3, contact_form: 0.2, mail: 0.2},
+      verification_multipliers: {verified: 1.0, corroborated: 0.85, ingested: 0.6, stale: 0.5, conflicting: 0.3},
+      bands: {high: 70, medium: 45}}
+qualification: {min_evidence: 3, max_wqs_for_opportunity: 70}
+fact_ttl_days: {phone: 90, email: 90, website: 90, operating_status: 60, manual_observation: 180}
+mass_filer_address_threshold: 25
