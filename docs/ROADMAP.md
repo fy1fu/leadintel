@@ -307,15 +307,22 @@ All steps must be completed and recorded before `allow_paid` can be set for `goo
 
 | # | Item |
 |---|---|
-| O1 | **Approval of the foundation decisions (§6) and the implementation sequence (§2).** Phase 1 does not start before it. |
+| O1 | ~~Approval of foundation decisions and sequence~~ **Approved 2026-11-03.** Phase 1 in progress ([PHASE1.md](PHASE1.md)). |
 | O2 | Code review and Windows test run of PR #1 (procedure in PR #1 and `SUNBIZ.md` §7). |
 | O3 | Verification items in [VERIFICATION.md](VERIFICATION.md). None block Phase 1 except V4 (Geofabrik) for the OSM source specifically. |
 
 ---
 
-## 6. Foundation decisions for approval
+## 6. Foundation decisions — **approved 2026-11-03**
 
-These are the choices that would be expensive to change after Phase 1 starts. Each has a recommendation.
+F1–F11 and the five-phase sequence were approved, with these clarifications:
+- **F1:** packaged defaults must always let the app start and recover when the DB is unavailable. Network settings stay independent. Scoring, geography, industry priorities and exclusions have version history; scoring-weight changes need approval and are reversible.
+- **F2:** native Windows install, with setup, backup, restore and recovery instructions (`docs/WINDOWS_SETUP.md`).
+- **F6:** Overture snapshots per release, with checksums, release metadata and safe cache cleanup; the same area is never downloaded twice.
+- **F7:** Postgres job queue; network diagnostics stay independent.
+- **F8:** qualification is **separate from ranking**. Qualified = meets the minimum evidence, opportunity, contactability, geography and exclusion rules; LPS ranks qualified prospects. A legitimate business mailing address counts as a contact route.
+
+Phase 1 execution plan: [PHASE1.md](PHASE1.md).
 
 | # | Decision | Recommendation | Why it matters |
 |---|---|---|---|
