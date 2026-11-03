@@ -249,7 +249,7 @@ def _run_sunbiz(s: Session, client: InfraClient, settings: Settings, cfg, since:
                 try:
                     dl = sc.download(rf)
                     sf = register_file(s, src, kind=kind, remote_path=rf.path, dl=dl, logical_date=rf.day,
-                                       remote_last_modified=rf.last_modified)
+                                       remote_last_modified=rf.last_modified, data_dir=settings.data_dir)
                     st = import_file(s, src, sf, kind, dl.path.read_bytes(), mass_filer_threshold=threshold)
                     out["files_imported"] += 1
                     out["records"] += st.parsed
@@ -305,7 +305,7 @@ def _run_dbpr(s: Session, client: InfraClient, settings: Settings, dbpr_cfg: dic
         if prev is not None:
             out[name] = {"reused": True}
             continue
-        sf = register_file(s, src, kind="dbpr_licensees", remote_path=f["url"], dl=dl)
+        sf = register_file(s, src, kind="dbpr_licensees", remote_path=f["url"], dl=dl, data_dir=settings.data_dir)
         st = import_extract(s, src, sf, dl.path.read_bytes(), zc, target_fips)
         out[name] = {k: (dict(v) if hasattr(v, "items") else v) for k, v in st.__dict__.items()}
         s.commit()

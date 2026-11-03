@@ -7,7 +7,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -71,6 +71,68 @@ def _write_json_atomic(path: Path, data: dict) -> None:
     os.replace(tmp, path)
 
 
+def _file_name(stored: str) -> str:
+    """Last path component of a stored path written on Windows or POSIX (never a directory part)."""
+    return (PureWindowsPath if "\\" in stored or (len(stored) > 1 and stored[1] == ":") else PurePosixPath)(stored).name
+
+
+def _cached_candidates(meta_path: Path, stored: str) -> list[Path]:
+    """Where a cached version may be, most portable first.
+
+    1. The file of that name next to its sidecar (works after the data folder is moved to another
+       folder or computer; the lookup never leaves the sidecar's folder).
+    2. The stored absolute path (sidecars written before relative paths were introduced).
+    """
+    out = []
+    name = _file_name(stored)
+    if name and name not in (".", ".."):
+        out.append(meta_path.parent / name)
+    if (PureWindowsPath(stored).is_absolute() or PurePosixPath(stored).is_absolute()) and Path(stored) not in out:
+        out.append(Path(stored))
+    return out
+
+
+def data_relative(path: Path, data_dir: Path | None) -> str:
+    """Path to record in source_file.local_path: relative (POSIX style) inside the data folder, else absolute."""
+    if data_dir is not None:
+        try:
+            return Path(path).resolve().relative_to(Path(data_dir).resolve()).as_posix()
+        except ValueError:
+            pass
+    return str(path)
+
+
+DATA_SUBDIRS = ("boundaries", "dbpr", "overture", "sunbiz")
+
+
+def resolve_local_path(stored: str | None, data_dir: Path) -> Path | None:
+    """Find the file a source_file.local_path refers to in the current data folder.
+
+    Relative entries resolve against `data_dir`. Older absolute entries (possibly from another computer
+    or operating system) are mapped by their position under a known data subfolder (dbpr/..., sunbiz/...),
+    falling back to the stored absolute path. Returns None when no candidate exists.
+    """
+    if not stored:
+        return None
+    win = "\\" in stored or (len(stored) > 1 and stored[1] == ":")
+    pure = PureWindowsPath(stored) if win else PurePosixPath(stored)
+    candidates = []
+    if not pure.is_absolute():
+        candidates.append(Path(data_dir).joinpath(*pure.parts))
+    else:
+        parts = pure.parts
+        for i in range(len(parts) - 1, -1, -1):
+            if parts[i] in DATA_SUBDIRS:
+                candidates.append(Path(data_dir).joinpath(*parts[i:]))
+                break
+        candidates.append(Path(stored))
+    root = Path(data_dir).resolve()
+    for c in candidates:
+        if c.exists() and (c.resolve().is_relative_to(root) or c == Path(stored)):
+            return c
+    return None
+
+
 def download_checked(client: InfraClient, url: str, dest: Path, *, expected_size: int | None = None,
                      remote_last_modified: datetime | None = None, auth: tuple[str, str] | None = None) -> Downloaded:
     """Download one remote file version safely; reuse it only when it is provably the same version.
@@ -78,7 +140,10 @@ def download_checked(client: InfraClient, url: str, dest: Path, *, expected_size
     * Remote identity = size + Last-Modified (from the caller's listing, or a HEAD request).
     * Every version is installed at an immutable, content-addressed path `<stem>.<sha12><suffix>`;
       earlier versions (and the source_file records pointing at them) are never overwritten.
-    * `<dest>.meta.json` records the current version (url, size, last_modified, sha256, path).
+    * `<dest>.meta.json` records the current version (url, size, last_modified, sha256, path). `path` is
+      the file NAME (the file sits next to its sidecar), so a moved data folder keeps working; older
+      sidecars with an absolute path are still honoured and are rewritten to the portable form once the
+      file has been verified.
       Reuse requires: same size AND same Last-Modified AND the local file's SHA-256 still matching.
       If the server gives no Last-Modified, the file is fetched again (a same-size change could not
       be detected otherwise).
@@ -103,9 +168,11 @@ def download_checked(client: InfraClient, url: str, dest: Path, *, expected_size
     meta = _read_json(meta_path)
     if (meta and lm is not None and meta.get("url") == url and meta.get("size") == expected_size
             and meta.get("last_modified") == lm):
-        cur = Path(meta["path"])
-        if cur.exists() and cur.stat().st_size == meta["size"] and sha256_file(cur) == meta["sha256"]:
-            return Downloaded(cur, meta["sha256"], meta["size"], True, remote_last_modified)
+        for cur in _cached_candidates(meta_path, str(meta.get("path", ""))):
+            if cur.is_file() and cur.stat().st_size == meta["size"] and sha256_file(cur) == meta["sha256"]:
+                if meta.get("path") != cur.name and cur.parent == meta_path.parent:
+                    _write_json_atomic(meta_path, {**meta, "path": cur.name})  # heal to the portable form
+                return Downloaded(cur, meta["sha256"], meta["size"], True, remote_last_modified)
     identity = {"url": url, "size": expected_size, "last_modified": lm}
     part = dest.with_name(dest.name + ".part")
     part_meta = part.with_name(part.name + ".meta.json")
@@ -134,21 +201,24 @@ def download_checked(client: InfraClient, url: str, dest: Path, *, expected_size
         part.unlink()
     else:
         os.replace(part, final)
-    _write_json_atomic(meta_path, {"url": url, "size": size, "last_modified": lm, "sha256": digest, "path": str(final)})
+    _write_json_atomic(meta_path, {"url": url, "size": size, "last_modified": lm, "sha256": digest, "path": final.name})
     part_meta.unlink(missing_ok=True)
     return Downloaded(final, digest, size, False, remote_last_modified)
 
 
 def register_file(s: Session, source: Source, *, kind: str, remote_path: str, dl: Downloaded, logical_date=None,
-                  remote_last_modified=None, status: str = "downloaded") -> SourceFile:
-    """One row per (path, content, remote version). Earlier rows are never modified or replaced."""
+                  remote_last_modified=None, status: str = "downloaded", data_dir: Path | None = None) -> SourceFile:
+    """One row per (path, content, remote version). Earlier rows are never modified or replaced.
+
+    `local_path` is stored relative to `data_dir` when the file is inside it (portable); otherwise absolute.
+    """
     remote_last_modified = remote_last_modified or dl.remote_last_modified
     row = s.execute(select(SourceFile).where(
         SourceFile.source_id == source.id, SourceFile.remote_path == remote_path, SourceFile.sha256 == dl.sha256,
         SourceFile.remote_last_modified.is_not_distinct_from(remote_last_modified))).scalar_one_or_none()
     if row is None:
         row = SourceFile(source_id=source.id, kind=kind, logical_date=logical_date, remote_path=remote_path,
-                         size=dl.size, sha256=dl.sha256, local_path=str(dl.path), status=status,
+                         size=dl.size, sha256=dl.sha256, local_path=data_relative(dl.path, data_dir), status=status,
                          remote_last_modified=remote_last_modified)
         s.add(row)
         s.flush()

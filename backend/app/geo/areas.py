@@ -44,7 +44,8 @@ def load_counties(s: Session, client: InfraClient, data_dir: Path, areas_cfg: di
     dest = data_dir / "boundaries" / Path(b["url"]).name
     dl = download_checked(client, b["url"], dest)
     src = ensure_source(s, "census_boundaries", CENSUS_SOURCE)
-    sf = register_file(s, src, kind="boundary_county", remote_path=b["url"], dl=dl, status="imported")
+    sf = register_file(s, src, kind="boundary_county", remote_path=b["url"], dl=dl, status="imported",
+                       data_dir=data_dir)
     targets = {t["geoid"]: t for t in areas_cfg["targets"] if t["kind"] == "county"}
     loaded = []
     for geoid, name, geom in _read_counties(dl.path, state_fips, b["id_field"], b["name_field"]):
