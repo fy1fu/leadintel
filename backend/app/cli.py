@@ -20,7 +20,29 @@ def main(argv: list[str] | None = None) -> int:
     nc.add_argument("--markdown", type=Path, help="write a Markdown report to this path")
     nc.add_argument("--no-run", action="store_true", help="report the latest stored results without probing")
     nc.add_argument("--no-store", action="store_true", help="keep results in memory only (no database at all)")
+    db = sub.add_parser("db", help="business database maintenance")
+    db.add_argument("action", choices=["upgrade", "status"])
+    cf = sub.add_parser("config", help="versioned application settings (F1)")
+    cf.add_argument("action", choices=["seed", "show", "history"])
+    cf.add_argument("--kind", default="scoring")
+    dc = sub.add_parser("discover", help="run discovery for the target areas")
+    dc.add_argument("--areas", help="comma-separated area keys (default: all enabled targets)")
+    dc.add_argument("--since", help="Sunbiz filings from this date (YYYY-MM-DD; default 30 days ago)")
+    dc.add_argument("--until", help="Sunbiz filings up to this date (default today)")
+    dc.add_argument("--release", help="Overture release (default: latest)")
+    dc.add_argument("--no-sunbiz", action="store_true")
+    dc.add_argument("--no-overture", action="store_true")
+    sc = sub.add_parser("score", help="recompute provisional scores and qualification for the target areas")
+    rp = sub.add_parser("report", help="niche comparison (no automatic winner)")
+    rp.add_argument("--niches", help="comma-separated industry profiles (default: all)")
+    ex = sub.add_parser("export", help="prospect CSV with provenance and verification states")
+    ex.add_argument("path", type=Path)
+    ex.add_argument("--niche")
+    ex.add_argument("--qualification", help="comma-separated: provisionally_qualified,needs_research,not_qualified")
+    ex.add_argument("--limit", type=int, default=100000)
     args = ap.parse_args(argv)
+    if args.cmd != "net-check":
+        return _business(args)
 
     ctx = build_context(persist=not args.no_store)
     if ctx.store.mode != "persistent":
@@ -41,3 +63,73 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def _business(args) -> int:
+    """Commands that need the business database (network diagnostics never do)."""
+    from datetime import date
+
+    from app.config import get_settings
+    settings = get_settings()
+    if args.cmd == "db":
+        from pathlib import Path
+
+        from alembic import command
+        from alembic.config import Config
+        cfg = Config(str(Path(__file__).parents[1] / "alembic.ini"))
+        cfg.set_main_option("script_location", str(Path(__file__).parents[1] / "migrations"))
+        cfg.set_main_option("sqlalchemy.url", settings.business_db_url)
+        command.upgrade(cfg, "head") if args.action == "upgrade" else command.current(cfg, verbose=True)
+        return 0
+    if args.cmd == "config":
+        from sqlalchemy.orm import Session
+
+        from app.appconfig.store import ConfigService
+        from app.db.session import make_engine
+        svc = ConfigService(settings)
+        engine = make_engine(settings)
+        if args.action == "seed":
+            with Session(engine) as s:
+                print("seeded:", svc.seed(s) or "nothing (already seeded)")
+                s.commit()
+        elif args.action == "show":
+            eff = svc.effective(engine)
+            print(json.dumps({"mode": eff.mode, "versions": eff.versions, "warnings": eff.warnings, args.kind: eff[args.kind]},
+                             indent=2, default=str))
+        else:
+            with Session(engine) as s:
+                for r in svc.history(s, args.kind):
+                    print(f"v{r.version:<3} {r.status:<11} by {r.created_by:<10} approved_by={r.approved_by} {r.created_at:%Y-%m-%d %H:%M} {r.note or ''}")
+        return 0
+    if args.cmd == "discover":
+        from app.pipeline.discover import run_discovery
+        res = run_discovery(settings, area_keys=args.areas.split(",") if args.areas else None,
+                            since=date.fromisoformat(args.since) if args.since else None,
+                            until=date.fromisoformat(args.until) if args.until else None,
+                            overture_release=args.release, sunbiz=not args.no_sunbiz, overture=not args.no_overture)
+        print(json.dumps({"run_id": res.run_id, "status": res.status, "coverage": res.coverage, "counts": res.counts},
+                         indent=2, default=str))
+        return 0 if res.status == "completed" else 4
+    if args.cmd in ("score", "report", "export"):
+        from sqlalchemy import text
+        from sqlalchemy.orm import Session
+
+        from app.appconfig.store import ConfigService
+        from app.db.session import make_engine
+        engine = make_engine(settings)
+        with Session(engine) as s:
+            fips = [r[0] for r in s.execute(text("SELECT spec->>'geoid' FROM area WHERE kind='county' AND is_target AND enabled"))]
+            if args.cmd == "score":
+                from app.scoring.runner import score_all
+                print(json.dumps(score_all(s, ConfigService(settings).effective(engine), fips), indent=2))
+                s.commit()
+            elif args.cmd == "report":
+                from app.reports.prospects import niche_comparison
+                print(json.dumps(niche_comparison(s, fips, args.niches.split(",") if args.niches else None), indent=2, default=str))
+            else:
+                from app.reports.prospects import export_csv
+                n = export_csv(s, args.path, fips, niche=args.niche,
+                               quals=args.qualification.split(",") if args.qualification else None, limit=args.limit)
+                print(f"wrote {n} prospects to {args.path}")
+        return 0
+    return 1

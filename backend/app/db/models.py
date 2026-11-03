@@ -390,3 +390,62 @@ class MergeEvent(Base):
     actor: Mapped[str] = mapped_column(String(80), default="system")
     reverts_event_id: Mapped[int | None] = mapped_column(ForeignKey("merge_event.id"))
     at: Mapped[datetime] = _now()
+
+
+# ----------------------------------------------------------------------------- targeting & scoring (Phase 1 M2)
+class KeywordHit(Base):
+    __tablename__ = "keyword_hit"
+    id: Mapped[int] = _pk()
+    location_id: Mapped[int] = mapped_column(ForeignKey("location.id"), index=True)
+    group: Mapped[str] = mapped_column(String(40))
+    polarity: Mapped[str] = mapped_column(String(8))                   # positive | negative
+    term: Mapped[str] = mapped_column(String(80))
+    matched_text: Mapped[str] = mapped_column(Text)
+    field: Mapped[str] = mapped_column(String(30))                      # name | alias | category
+    effect: Mapped[float] = mapped_column(Float)
+    neutralized: Mapped[bool] = mapped_column(Boolean, default=False)
+    config_version_id: Mapped[int | None] = mapped_column(ForeignKey("config_version.id"))
+    computed_at: Mapped[datetime] = _now()
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Score(Base):
+    """Append-only. The current score per (location, kind) has superseded_at IS NULL."""
+    __tablename__ = "score"
+    id: Mapped[int] = _pk()
+    location_id: Mapped[int] = mapped_column(ForeignKey("location.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(8))                       # bos | lps | wqs
+    stage: Mapped[str] = mapped_column(String(12))                     # provisional | final
+    value: Mapped[float | None] = mapped_column(Float)
+    pre_cap_value: Mapped[float | None] = mapped_column(Float)
+    caps_applied: Mapped[list] = mapped_column(JSONB, default=list)
+    evidence_points: Mapped[int | None] = mapped_column(Integer)
+    confidence: Mapped[float | None] = mapped_column(Float)
+    config_versions: Mapped[dict] = mapped_column(JSONB, default=dict)
+    inputs_hash: Mapped[str | None] = mapped_column(String(64))       # unchanged inputs -> no new row
+    computed_at: Mapped[datetime] = _now()
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (Index("ix_score_current", "location_id", "kind", "superseded_at"),)
+
+
+class ScoreFactor(Base):
+    __tablename__ = "score_factor"
+    id: Mapped[int] = _pk()
+    score_id: Mapped[int] = mapped_column(ForeignKey("score.id"), index=True)
+    component: Mapped[str] = mapped_column(String(30))
+    factor: Mapped[str] = mapped_column(String(60))
+    effect: Mapped[float] = mapped_column(Float)
+    evidence: Mapped[dict] = mapped_column(JSONB, default=dict)
+    provenance: Mapped[str | None] = mapped_column(String(16))
+
+
+class Qualification(Base):
+    """Separate from ranking (F8): a gate with reasons. Append-only like scores."""
+    __tablename__ = "qualification"
+    id: Mapped[int] = _pk()
+    location_id: Mapped[int] = mapped_column(ForeignKey("location.id"), index=True)
+    status: Mapped[str] = mapped_column(String(24))   # qualified | provisionally_qualified | needs_research | not_qualified
+    reasons: Mapped[list] = mapped_column(JSONB, default=list)
+    stage: Mapped[str] = mapped_column(String(12))
+    computed_at: Mapped[datetime] = _now()
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

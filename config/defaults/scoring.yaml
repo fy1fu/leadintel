@@ -14,3 +14,8 @@ lps: {weights: {contact: 0.35, verification: 0.25, assessment: 0.25, freshness: 
 qualification: {min_evidence: 3, max_wqs_for_opportunity: 70}
 fact_ttl_days: {phone: 90, email: 90, website: 90, operating_status: 60, manual_observation: 180}
 mass_filer_address_threshold: 25
+non_customer_facing_categories: [atm, park, school, college_university, place_of_worship, church, christian_place_of_worship,
+  government_office, post_office, public_toilet, parking, bus_station, cemetery, playground, historic_site, monument,
+  community_center, library, fire_station, police_station, structure_and_geography, landmark_and_historical_building]
+provisional_website_need: {independent_listed: 0.4, social_only_listed: 0.75, link_hub_only_listed: 0.75, listing_only: 0.65, nothing_listed: 0.6}
+freshness_days: 60
