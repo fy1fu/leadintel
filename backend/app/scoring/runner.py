@@ -20,31 +20,44 @@ from app.scoring.model import Features, score
 from app.targeting.keywords import hard_excluded, match, tokens
 
 FEATURE_SQL = """
-SELECT l.id, l.display_name, l.category, l.operating_status, l.chain_flag, l.county_fips, l.last_seen_at::date AS last_seen,
-  (SELECT (sr.payload->>'confidence')::float FROM location_source_link k JOIN source_record sr
-      ON sr.external_id = k.external_id AND sr.record_kind = 'place'
-    WHERE k.location_id = l.id AND k.source_key = 'overture' AND k.active ORDER BY sr.id DESC LIMIT 1) AS overture_confidence,
-  COALESCE((SELECT array_agg(DISTINCT alias) FROM location_alias WHERE location_id = l.id), '{}') AS aliases,
-  COALESCE((SELECT json_agg(DISTINCT jsonb_build_array(platform, platform_kind)) FROM online_profile WHERE location_id = l.id), '[]') AS platforms,
-  COALESCE((SELECT array_agg(lc.verification_state) FROM location_contact lc JOIN contact_point cp ON cp.id = lc.contact_point_id
-            WHERE lc.location_id = l.id AND lc.active AND cp.kind = 'phone'), '{}') AS phones,
-  COALESCE((SELECT array_agg(lc.verification_state) FROM location_contact lc JOIN contact_point cp ON cp.id = lc.contact_point_id
-            WHERE lc.location_id = l.id AND lc.active AND cp.kind = 'email'), '{}') AS emails,
-  EXISTS (SELECT 1 FROM address a WHERE a.owner_type = 'location' AND a.owner_id = l.id AND a.is_operating_location
-          AND a.zip5 IS NOT NULL AND a.line1 IS NOT NULL AND a.line1 !~* '^\\s*p\\.?\\s*o\\.?\\s*box') AS has_mail_address,
-  COALESCE((SELECT array_agg(DISTINCT source_key) FROM location_source_link WHERE location_id = l.id AND active), '{}') AS sources,
-  COALESCE((SELECT json_agg(json_build_object('filing_kind', o.filing_kind, 'registration_date', o.registration_date,
-            'status', o.status, 'owner_registration_date',
-            (SELECT min(ow.registration_date) FROM organization_link ol JOIN organization ow ON ow.id = ol.to_org_id
-             WHERE ol.from_org_id = o.id AND ol.kind = 'dba_owned_by')))
-            FROM location_organization lo JOIN organization o ON o.id = lo.organization_id
-            WHERE lo.location_id = l.id AND lo.active), '[]') AS orgs,
-  EXISTS (SELECT 1 FROM area a WHERE a.kind = 'county' AND a.is_target AND a.enabled AND a.spec->>'geoid' = l.county_fips) AS in_target,
-  COALESCE((SELECT array_agg(DISTINCT f.value->>'licence_number') FROM fact f WHERE f.subject_type='location' AND f.subject_id=l.id
-            AND f.field IN ('licence', 'btr') AND f.superseded_at IS NULL), '{}') AS licences
-FROM location l
-WHERE l.merged_into_id IS NULL AND l.county_fips = ANY(:fips)
-ORDER BY l.id
+WITH loc AS (
+  SELECT l.id, l.display_name, l.category, l.operating_status, l.chain_flag, l.county_fips, l.last_seen_at::date AS last_seen
+  FROM location l WHERE l.merged_into_id IS NULL AND l.county_fips = ANY(:fips)
+), conf AS (
+  SELECT DISTINCT ON (k.location_id) k.location_id, (r.payload->>'confidence')::float AS c
+  FROM location_source_link k JOIN loc ON loc.id = k.location_id
+  JOIN source s ON s.key = 'overture'
+  JOIN source_record r ON r.source_id = s.id AND r.record_kind = 'place' AND r.external_id = k.external_id
+  WHERE k.source_key = 'overture' AND k.active ORDER BY k.location_id, r.id DESC
+), al AS (SELECT location_id, array_agg(DISTINCT alias) a FROM location_alias JOIN loc ON loc.id = location_id GROUP BY 1
+), pf AS (SELECT location_id, json_agg(DISTINCT jsonb_build_array(platform, platform_kind)) p FROM online_profile
+          JOIN loc ON loc.id = location_id GROUP BY 1
+), ct AS (SELECT lc.location_id, array_agg(lc.verification_state) FILTER (WHERE cp.kind = 'phone') ph,
+                 array_agg(lc.verification_state) FILTER (WHERE cp.kind = 'email') em
+          FROM location_contact lc JOIN contact_point cp ON cp.id = lc.contact_point_id JOIN loc ON loc.id = lc.location_id
+          WHERE lc.active GROUP BY 1
+), ad AS (SELECT DISTINCT owner_id FROM address a JOIN loc ON loc.id = a.owner_id
+          WHERE a.owner_type = 'location' AND a.is_operating_location AND a.zip5 IS NOT NULL AND a.line1 IS NOT NULL
+            AND a.line1 !~* '^\\s*p\\.?\\s*o\\.?\\s*box'
+), src AS (SELECT location_id, array_agg(DISTINCT source_key) s FROM location_source_link JOIN loc ON loc.id = location_id
+           WHERE active GROUP BY 1
+), org AS (SELECT lo.location_id, json_agg(json_build_object('filing_kind', o.filing_kind, 'registration_date', o.registration_date,
+              'status', o.status, 'owner_registration_date', ow.reg)) j
+           FROM location_organization lo JOIN loc ON loc.id = lo.location_id JOIN organization o ON o.id = lo.organization_id
+           LEFT JOIN LATERAL (SELECT min(x.registration_date) reg FROM organization_link ol JOIN organization x ON x.id = ol.to_org_id
+                              WHERE ol.from_org_id = o.id AND ol.kind = 'dba_owned_by') ow ON true
+           WHERE lo.active GROUP BY 1
+), lic AS (SELECT f.subject_id, array_agg(DISTINCT f.value->>'licence_number') l FROM fact f JOIN loc ON loc.id = f.subject_id
+           WHERE f.subject_type = 'location' AND f.field IN ('licence', 'btr') AND f.superseded_at IS NULL GROUP BY 1
+), tgt AS (SELECT spec->>'geoid' g FROM area WHERE kind = 'county' AND is_target AND enabled)
+SELECT loc.*, conf.c AS overture_confidence, coalesce(al.a, '{}') AS aliases, coalesce(pf.p, '[]') AS platforms,
+       coalesce(ct.ph, '{}') AS phones, coalesce(ct.em, '{}') AS emails, (ad.owner_id IS NOT NULL) AS has_mail_address,
+       coalesce(src.s, '{}') AS sources, coalesce(org.j, '[]') AS orgs, (loc.county_fips IN (SELECT g FROM tgt)) AS in_target,
+       coalesce(lic.l, '{}') AS licences
+FROM loc LEFT JOIN conf ON conf.location_id = loc.id LEFT JOIN al ON al.location_id = loc.id
+LEFT JOIN pf ON pf.location_id = loc.id LEFT JOIN ct ON ct.location_id = loc.id LEFT JOIN ad ON ad.owner_id = loc.id
+LEFT JOIN src ON src.location_id = loc.id LEFT JOIN org ON org.location_id = loc.id LEFT JOIN lic ON lic.subject_id = loc.id
+ORDER BY loc.id
 """
 
 

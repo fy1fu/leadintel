@@ -11,8 +11,19 @@ from app.net.service import NetContext, build_context
 
 
 def create_app(ctx: NetContext | None = None) -> FastAPI:
-    app = FastAPI(title="LeadIntel", version="0.2.0")
+    app = FastAPI(title="LeadIntel", version="0.3.0")
     app.state.net = ctx or build_context()
+    from pathlib import Path
+
+    from fastapi.responses import FileResponse
+
+    from app.api.business import router as business_router
+    app.include_router(business_router)
+    index = Path(__file__).parent / "static" / "index.html"
+
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    def home() -> FileResponse:
+        return FileResponse(index)
 
     @app.get("/api/health")
     def health() -> dict:
