@@ -64,3 +64,13 @@ def test_category_field_matches_taxonomy_codes():
 def test_hard_exclude_records_reason():
     cfg = dict(CFG, hard_exclude=[{"phrase": "notary", "reason": "user: not a target"}])
     assert hard_excluded({"name": "Mobile Notary Services"}, cfg) == "user: not a target"
+
+
+def test_industry_classification_needs_whole_category_terms():
+    from app.scoring.runner import classify
+    ind = yaml.safe_load(open(REPO_ROOT / "config" / "defaults" / "industries.yaml"))
+    assert classify("landscaping", set(), ind) == "landscaping"
+    assert classify("commercial_cleaning", set(), ind) == "cleaning"
+    assert classify("financial_service", set(), ind) is None      # regression: shared word "service"
+    assert classify("home_service", set(), ind) is None
+    assert classify(None, {"pressure_washing"}, ind) == "pressure_washing"

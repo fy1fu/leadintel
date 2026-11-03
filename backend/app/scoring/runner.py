@@ -66,13 +66,16 @@ def _d(v):
 
 
 def classify(category: str | None, hit_groups: set[str], industries: dict) -> str | None:
-    cat_toks = set(tokens(category))
+    from app.targeting.keywords import find_phrase
+    cat_toks = tokens(category)
     best = None
     for key, p in industries["profiles"].items():
         if not p.get("enabled", True):
             continue
         tax = set(p.get("overture_taxonomy", []))
-        rank = 0 if category in tax else 1 if cat_toks & {t for x in tax for t in tokens(x)} else \
+        # rank 0: exact category; rank 1: a whole taxonomy term inside the category (commercial_cleaning ~ cleaning),
+        # never a single shared word ("financial_service" must not match "lawn_service"); rank 2: keyword groups
+        rank = 0 if category in tax else 1 if any(find_phrase(cat_toks, " ".join(tokens(x)), False) for x in tax) else \
             2 if hit_groups & set(p.get("keyword_groups", [])) else None
         if rank is None:
             continue
@@ -110,7 +113,8 @@ def _score_batch(s, rows, cfg, versions, current, today, now, st):
                      operating_status=r["operating_status"], chain_flag=r["chain_flag"], overture_confidence=r["overture_confidence"],
                      platforms=[tuple(p) for p in r["platforms"]], phones=list(r["phones"]), emails=list(r["emails"]),
                      has_mail_address=r["has_mail_address"], sources=set(r["sources"]),
-                     orgs=[{k: _d(v) for k, v in o.items()} for o in r["orgs"]], in_target=r["in_target"],
+                     orgs=[{k: (_d(v) if k.endswith("_date") else v) for k, v in o.items()} for o in r["orgs"]],
+                     in_target=r["in_target"],
                      last_seen=r["last_seen"], industry=industry, licences=list(r["licences"]))
         h = hashlib.sha256(json.dumps([asdict(f), [h.__dict__ for h in hits], excl, versions], default=str, sort_keys=True)
                            .encode()).hexdigest()

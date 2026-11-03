@@ -31,7 +31,8 @@ main{flex:1;display:grid;grid-template-columns:340px 1fr 380px;min-height:0}
 table{border-collapse:collapse;width:100%;font-size:12.5px} td,th{text-align:left;padding:3px 4px;border-bottom:1px solid var(--line);vertical-align:top}
 .num{font-variant-numeric:tabular-nums;text-align:right}
 .banner{padding:8px 16px;font-size:12.5px;background:var(--bg);border-bottom:1px solid var(--line)}
-@media (max-width:900px){main{grid-template-columns:1fr;grid-template-rows:260px 40vh auto}#map{order:-1}#list,#profile{border:0;border-top:1px solid var(--line)}}
+@media (max-width:900px){body{height:auto;min-height:100vh}main{grid-template-columns:1fr;grid-template-rows:300px 45vh auto}
+  #map{order:-1;height:300px;min-height:0}#list,#profile{border:0;border-top:1px solid var(--line);overflow:auto}#profile{min-height:40vh}}
 </style>
 </head>
 <body>
@@ -82,7 +83,7 @@ async function load() {
   try {
     const d = await api("/api/prospects?" + p);
     items = d.items;
-    $("#count").textContent = `${d.count} shown`;
+    $("#count").textContent = d.count > 1000 ? `${d.count} on map · top 1,000 by LPS listed` : `${d.count} shown`;
     renderList();
     const fc = {type: "FeatureCollection", features: items.filter(i => i.lon != null).map(i => ({type: "Feature",
       geometry: {type: "Point", coordinates: [i.lon, i.lat]}, properties: {id: i.id, q: i.qualification || "none"}}))};
@@ -95,7 +96,7 @@ function addLayers(fc) {
   map.addLayer({id: "clusters", type: "circle", source: "p", filter: ["has", "point_count"],
     paint: {"circle-color": css("--accent"), "circle-opacity": .75, "circle-radius": ["step", ["get", "point_count"], 14, 50, 20, 250, 28]}});
   map.addLayer({id: "cluster-count", type: "symbol", source: "p", filter: ["has", "point_count"],
-    layout: {"text-field": "{point_count_abbreviated}", "text-size": 12}, paint: {"text-color": "#fff"}});
+    layout: {"text-field": "{point_count_abbreviated}", "text-size": 12, "text-font": ["Noto Sans Regular"]}, paint: {"text-color": "#fff"}});
   map.addLayer({id: "pts", type: "circle", source: "p", filter: ["!", ["has", "point_count"]],
     paint: {"circle-radius": 6, "circle-stroke-width": 1.5, "circle-stroke-color": "#fff",
       "circle-color": ["match", ["get", "q"], "provisionally_qualified", css("--q-ok"), "needs_research", css("--q-research"), css("--q-no")]}});

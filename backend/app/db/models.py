@@ -256,7 +256,7 @@ class Address(Base):
     line2: Mapped[str | None] = mapped_column(Text)
     city: Mapped[str | None] = mapped_column(Text)
     state: Mapped[str | None] = mapped_column(String(2))
-    zip5: Mapped[str | None] = mapped_column(String(5))
+    zip5: Mapped[str | None] = mapped_column(String(5), index=True)
     country: Mapped[str | None] = mapped_column(String(2))
     norm_key: Mapped[str | None] = mapped_column(Text, index=True)
     geom = mapped_column(Geometry("POINT", srid=4326, spatial_index=True), nullable=True)

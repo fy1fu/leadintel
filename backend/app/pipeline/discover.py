@@ -93,8 +93,14 @@ def _run(settings, engine, cfg, reg, guard, client, area_keys, since, until, ove
             with Session(engine) as s:  # we hold the lock, so any 'running' run is stale (process was killed)
                 s.execute(text("UPDATE discovery_run SET status='interrupted', finished_at=now() WHERE status='running'"))
                 s.commit()
-            return _run_locked(settings, engine, cfg, reg, guard, client, area_keys, since, until, overture_release,
-                               sunbiz, overture)
+            try:
+                return _run_locked(settings, engine, cfg, reg, guard, client, area_keys, since, until, overture_release,
+                                   sunbiz, overture)
+            except Exception:
+                with Session(engine) as s:  # never leave a crashed run looking like it is still running
+                    s.execute(text("UPDATE discovery_run SET status='failed', finished_at=now() WHERE status='running'"))
+                    s.commit()
+                raise
         finally:
             lock_conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": LOCK_KEY})
 
@@ -193,6 +199,9 @@ def _run_locked(settings, engine, cfg, reg, guard, client, area_keys, since, unt
                 _cov(s, run.id, "dbpr", areas, "failed", f"{type(exc).__name__}: {exc}")
                 partial = True
                 s.commit()
+        else:
+            _cov(s, run.id, "dbpr", areas, "not_run", "no DBPR files configured in the active 'sources' settings")
+            s.commit()
 
         # ---------------------------------------------------------------- resolution + summary
         dst = dedupe_locations(s, sorted(target_fips))

@@ -30,6 +30,15 @@ def seed(s):
                         platform="facebook", platform_kind="social", source_key="overture"))
     s.add(Address(owner_type="location", owner_id=l2.id, role="principal", line1="1 Filer Plaza", zip5="32202",
                   norm_key="1 FILER PLZ|32202", is_operating_location=True))
+    from app.db.models import Organization, LocationOrganization, Source
+    src = Source(key="sunbiz", name="Sunbiz")
+    s.add(src)
+    s.flush()
+    org = Organization(source_id=src.id, document_number="G26000000001", name="BOBS PRESSURE WASHING", name_norm="bobs pressure washing",
+                       filing_kind="fictitious_name", filing_type_code="FIC", status="active", registration_date=date(2026, 10, 1))
+    s.add(org)
+    s.flush()
+    s.add(LocationOrganization(location_id=l1.id, organization_id=org.id, role="trade_name"))  # regression: org dicts with text fields
     s.flush()
     return l1, l2
 
