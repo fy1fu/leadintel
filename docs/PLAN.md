@@ -1,6 +1,13 @@
 # LeadIntel: Architecture & Implementation Plan
 
-Status: **v0.2: free-first architecture (2026-11-02).** This supersedes v0.1, which assumed Google Places, Google Maps and paid search APIs.
+Status: **v0.3 (2026-11-03).** The v0.2 free-first architecture below remains in force. v0.3 adds high-intent lead discovery, niche targeting and customer acquisition. It is consolidated in:
+- [ROADMAP.md](ROADMAP.md): every requirement classified as implemented / planned / new / optional, plus the revised five phases. **This supersedes §11 below.**
+- [SCORING.md](SCORING.md): presence classification, keyword scoring, WQS / BOS / LPS. **This supersedes §7 and restores the v0.1 formulas.**
+- [DATA_MODEL.md](DATA_MODEL.md): consolidated schema. **This supersedes §8.**
+- [SUNBIZ.md](SUNBIZ.md), [NETWORK.md](NETWORK.md), [VERIFICATION.md](VERIFICATION.md), [REVIEW.md](REVIEW.md) (architecture review).
+- Superseded details inside this file: §9.1 deployment, now native Windows installs recommended (ROADMAP.md §6 F2); §9.2 layout, which additionally gets `targeting/`, `campaigns/`, `crm/`, `packages/` and `analytics/` modules. Network diagnostics keep their own store (NETWORK.md §6).
+
+v0.2 superseded v0.1, which assumed Google Places, Google Maps and paid search APIs.
 
 **Guiding constraint:** the application must be fully useful with **zero recurring charges and no paid API dependencies**.
 - Paid integrations exist only as disabled-by-default adapters that a configuration change can enable later.
@@ -37,7 +44,7 @@ Evidence tags:
   | Phone | 89% |
   | Social link | 50% |
   | Email | 33% |
-  | `brand` (useful for chain detection) | 49% |
+  | `brand` struct present | 49%. **Correction (v0.3):** 20,503 of those have an empty brand name and only 600 carry a Wikidata brand ID, so presence alone is *not* a chain signal (see SCORING.md §4.2). |
 
 - Operating status: open 37,340 / permanently closed 2,263 / unknown 11,749.
 - Contributing sources: Meta, BrightQuery, Microsoft, Foursquare, AllThePlaces, others.
@@ -233,7 +240,7 @@ All three produce the same `Assessment` schema with `provider`, `model` and `pro
 
 ---
 
-## 7. Scoring (updated inputs, same structure)
+## 7. Scoring (updated inputs, same structure) — superseded by [SCORING.md](SCORING.md)
 
 Three separate scores, unchanged in principle:
 - **WQS:** website quality, 0–100, or N/A when there is no website or it is inaccessible.
@@ -250,13 +257,13 @@ Free-data substitutions for the signals that used to come from Google:
 | Establishment / age | Review history | Sunbiz filing date, licence original-issue date, BTR start date, Wayback first-seen, RDAP |
 | Size / scale | Review count | Licence class (e.g. certified vs registered contractor), number of locations, BrightQuery presence in Overture sources, site complexity. All weak signals, labelled as such. |
 | Reputation | Ratings | **Not available.** Excluded and noted; it does not count against the business. |
-| Chain / franchise | Brand lists | Overture `brand` (present on 49% of places in the test area) + multi-location detection + brand list |
+| Chain / franchise | Brand lists | Overture brand **Wikidata ID** or recurring brand name (not mere `brand` presence) + multi-location detection + brand list |
 
 **Verification confidence** (feeds LPS) is now explicitly **multi-source agreement**. A business confirmed independently by e.g. Overture + DBPR + BTR, with a matching phone on its own website, is high confidence. A single-source record is low.
 
 ---
 
-## 8. Data model changes vs v0.1
+## 8. Data model changes vs v0.1 — superseded by [DATA_MODEL.md](DATA_MODEL.md)
 
 v0.1 tables kept as designed: `organization`, `location`, `source_record`, `location_source_link`, `fact`, `website`, `location_website`, `crawl`, `page`, `measurement`, `assessment`, `score`, `industry_profile`, `benchmark_set`, `search_area`, `discovery_run`, `lead*`, `review_queue`, boundaries.
 
@@ -337,7 +344,7 @@ docs/           PLAN.md  data-sources.md  scoring.md
 
 ---
 
-## 11. Phases (revised)
+## 11. Phases (revised) — superseded by [ROADMAP.md §2](ROADMAP.md)
 
 ### Phase 1: Foundation + free discovery
 - Scaffold, Docker Compose, migrations, CI (sized for the free tier).
@@ -389,7 +396,7 @@ Implemented ahead of Phase 1. Full details: [NETWORK.md](NETWORK.md).
 - Business-website crawling uses a separate SSRF-protected client.
 - Paid providers are blocked and the number of paid requests is reported (0).
 
-## 13. Open items for you
+## 13. Open items for you — superseded by [ROADMAP.md §5](ROADMAP.md)
 
 1. **Hardware for local AI:** do you have a GPU, and how much VRAM? About 8 GB runs a capable vision model; without one, the `none` provider is used and subjective criteria are marked "not assessed".
 2. **Foursquare OS Places:** willing to create a free Hugging Face account and accept the gated-access form? Optional; adds a third places source.
