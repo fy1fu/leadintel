@@ -1,6 +1,6 @@
 # Open verification items (before Phase 1)
 
-Status as of 2026-11-02. Items are closed only by a real request or a real data check, never by assumption.
+Status as of 2026-11-03. Items are closed only by a real request or a real data check, never by assumption.
 
 | # | Item | Current evidence | Blocking? | How to close |
 |---|---|---|---|---|
@@ -13,7 +13,9 @@ Status as of 2026-11-02. Items are closed only by a real request or a real data 
 | V7 | Duval BTR report export | Tax Collector page works; report portal shows a Cloudflare bot challenge (never bypassed) | No | Manual export or public-records request; decide per county |
 | V8 | NPI bulk files | Page reports "down for maintenance"; API works | No | Re-run diagnostics later |
 | V9 | Sunbiz HTTPS rate limits for bulk downloads | Only small requests made so far | No | Observe during the first quarterly download (resumable) |
-| V10 | Clay and St. Johns County BTR data access | Not yet checked; Duval's report portal is behind a bot challenge | No (manual CSV import possible) | Check each county Tax Collector's published reports; public-records request where needed |
+| V10 | Clay and St. Johns County BTR data access | Not yet checked; Duval's report portal is behind a bot challenge | **No** (decided: generic manual-CSV import covers any county) | Check each county Tax Collector's published reports; public-records request where needed |
 | V11 | Review-count evidence from free sources | Overture has no review fields (verified). No permitted free bulk source identified. | No (manual entry planned) | Manual research fields, or Google Places after the [ROADMAP.md §4](ROADMAP.md) checklist |
 
-The v0.3 requirements are consolidated in [ROADMAP.md](ROADMAP.md).
+| V12 | Windows run of the PR #1 test suite and live diagnostics | Not yet run; Windows-specific socket handling added, not exercised | Before merging PR #1 | Procedure in PR #1 description |
+
+The v0.3 requirements are consolidated in [ROADMAP.md](ROADMAP.md); the 2026-11-03 architecture review is in [REVIEW.md](REVIEW.md).

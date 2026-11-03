@@ -38,6 +38,8 @@ A single label can't express "has a Facebook page *and* the website discovery is
 | `directory_only` | No independent site or social profile; present only in listings/registries (Overture/OSM/DBPR/BTR/NPI/Sunbiz) |
 | `unknown` | Website status `incomplete` and no social or directory evidence yet |
 
+Listings (Google, Yelp) and registry entries are `platform_kind = listing`, never social: Facebook + a Google listing is `facebook_only`.
+
 **A social-network, link-in-bio, directory or builder-subdomain URL is never an independent website.** Facebook, Instagram, TikTok, Linktree, Yelp, Nextdoor and Google listings are presence, not websites. A builder subdomain such as `*.wixsite.com` counts as an independent website, but with an "unbranded domain" deficiency.
 
 The nine categories required in v0.3 §3 map onto the two axes:
@@ -51,6 +53,7 @@ The nine categories required in v0.3 §3 map onto the two axes:
 | 5 Directory-only | `presence = directory_only` |
 | 6 Website exists but inaccessible | `website_status = inaccessible` |
 | 7 Website appears outdated | `confirmed` and WQS < 60, or the modernity dimension < 0.4 |
+| *(between 7 and 8)* Average website, moderate improvement opportunity | `confirmed` and WQS 60–69 |
 | 8 Website reasonably good | `confirmed` and WQS ≥ 70 |
 | 9 Discovery incomplete | `website_status = incomplete` |
 
@@ -84,7 +87,8 @@ version: 1
 match:
   mode: token_phrase          # word-boundary, phrase-aware; never raw substring
   case_insensitive: true
-  variants: true              # wash/washing/washer, clean/cleaning, detail/detailing
+  variants: positive_only     # wash/washing, clean/cleaning, detail/detailing. Negative groups match exact
+                              # tokens only, so "Trusted Lawn Care" does not hit "trust" and "Capitalize" does not hit "capital".
 groups:
   pressure_washing: {weight: +12, phrases: ["pressure wash", "power wash", "soft wash", "pressure washing"]}
   lawn_landscaping: {weight: +10, phrases: ["lawn", "landscaping", "landscape", "irrigation", "tree service", "sod"]}
@@ -94,21 +98,22 @@ groups:
   pest:             {weight: +9,  phrases: ["pest", "termite", "exterminat*"]}
   trades:           {weight: +9,  phrases: ["roof", "roofing", "hvac", "plumbing", "electrical", "appliance repair", "welding", "septic"]}
   pool:             {weight: +9,  phrases: ["pool cleaning", "pool maintenance", "pool service"]}
-  mobile_auto:      {weight: +10, phrases: ["mobile detail*", "auto detailing", "car wash", "window tint*", "tint", "mobile mechanic", "auto repair"]}
-  marine:           {weight: +10, phrases: ["marine", "boat", "boat repair", "boat detailing", "charter", "fishing charter", "dock construction"]}
+  mobile_auto:      {weight: +10, phrases: ["detail", "mobile detail*", "auto detailing", "car wash", "window tint*", "tint", "mobile mechanic", "auto repair"]}
+  marine:           {weight: +10, phrases: ["marine", "boat", "boat repair", "boat maintenance", "boat detailing", "charter", "fishing", "fishing charter", "dock construction"]}
   generic_mobile:   {weight: +4,  phrases: ["mobile"]}     # weak alone; only boosts with a trade word
 negative:
   holding:     {penalty: -15, phrases: ["holdings", "holding company"]}
-  investment:  {penalty: -12, phrases: ["investments", "capital", "ventures", "equities"]}
+  investment:  {penalty: -12, phrases: ["investments", "capital", "ventures", "equities"], neutralized_by_any_positive_group: true}
   realty:      {penalty: -6,  phrases: ["realty"]}         # a realtor can still be a prospect
-  trust:       {penalty: -10, phrases: ["trust"]}
+  trust:       {penalty: -10, phrases: ["trust"], neutralized_by_any_positive_group: true}
   properties:  {penalty: -8,  phrases: ["properties"], neutralized_by: ["maintenance", "cleaning", "lawn", "landscaping", "management", "services"]}
 hard_exclude: []              # user-managed; each entry stores a reason
 ```
 
 Rules:
 - **Negative keywords penalize; they never exclude** unless the user adds a `hard_exclude` entry.
-- `neutralized_by` removes a penalty when a customer-facing trade word is also present, e.g. "Coastal Properties Lawn Maintenance".
+- `neutralized_by` removes a penalty when a customer-facing trade word is also present, e.g. "Coastal Properties Lawn Maintenance". `neutralized_by_any_positive_group` does the same when any positive trade group matched, e.g. "Capital City Cleaning".
+- Keyword and filing-kind effects are **points on the BOS scale**, combined into the bounded targeting adjustment `T` (§4.4). They never bypass the caps.
 - Matching runs on the legal name, DBA names, Overture/OSM names and categories. Each hit stores the term, matched text, field and source.
 - The lead profile lists every keyword that changed a score.
 - Tests cover false positives (`prewash`, `Detailed Analytics LLC`, `Capitalize Marketing`) and phrase boundaries.
@@ -117,7 +122,7 @@ Rules:
 
 ## 3. Entity-type weighting (registry leads)
 
-Initial-priority adjustment for **registry-derived** candidates only. Businesses found through operating-business sources are not affected.
+BOS-point adjustment for **registry-derived** candidates only; part of `T` (§4.4). Businesses found only through operating-business sources are not affected.
 
 | Filing kind | Weight | Rationale |
 |---|---|---|
@@ -175,6 +180,26 @@ Evidence points, each with its source:
 
 This is what makes "no website" alone insufficient.
 
+Evidence rules:
+- A filing's own recency or kind (DBA, LLC) earns **no** evidence points. Only independent signs of trading count.
+- An Overture "open" listing counts only at Overture confidence ≥ 0.6 (configurable).
+- A stale manual observation (> 180 days) removes **only** its own "reviews recorded" points and the review factor. Every other evidence item is unaffected.
+
+### 4.4 Computation order (normative; one pipeline everywhere)
+
+```
+1. components  C_k ∈ [0,1]          from current facts (unknown inputs → neutral value + lower confidence)
+2. base        B  = 100 · Σ W_k·C_k
+3. targeting   T  = clamp(Σ keyword effects + filing-kind effect, −30, +20)
+4. adjusted    X  = clamp(B + T, 0, 100)
+5. multipliers M  = product of applicable §4.2 multipliers      → Y = X · M
+6. caps        BOS = min(Y, evidence cap §4.3, strong-website cap §4.2, any user cap)
+```
+
+- Caps are applied **last** and as a `min`. No number of positive filing, keyword or recency signals can lift a record above its evidence cap.
+- `pre_cap_value` and `caps_applied` are stored with the score, and the factor ledger shows the cap as its own row.
+- The same pipeline produces **provisional** scores in Phases 1–2 (website and presence inputs unknown → neutral, `stage = provisional`) and final scores from Phase 3. There is no separate "initial priority" score.
+
 ---
 
 ## 5. Website Quality Score (WQS), restored from v0.1
@@ -203,13 +228,28 @@ bands: High ≥ 70 · Medium 45–69 · Low < 45      (configurable)
 ```
 
 - **contact_completeness** counts only published contact data, weighted by channel: phone 0.5, email 0.3, website contact form 0.2. A mailing address alone gives 0.2; it enables mail outreach only.
+- Each contact field's weight is multiplied by its **verification state**: `verified` 1.0, `corroborated` 0.85, `ingested` 0.6, `stale` 0.5, `conflicting` 0.3. Imported-but-unverified contact data therefore always ranks below verified data.
+- Contact points on the do-not-contact list contribute 0.
 - **Sunbiz-only leads usually have no phone or email**, so their LPS stays low until another source corroborates them. This is intended.
 
 ### Manual observations in scores
 
-- Manual review counts and ratings count as evidence only while ≤ 180 days old (configurable).
-- Each one appears in the factor ledger as *manually observed on <date>*, never as collected data.
-- Older observations stay visible but stop contributing until the user re-checks them; the app never refreshes them itself.
+- Only the **current** observation per (business, platform) is used: the latest non-retracted one. It counts while ≤ 180 days old (configurable).
+- It appears in the factor ledger as *manually observed on <date>*, never as collected data.
+- **History is preserved.** A re-check adds a new observation linked to the earlier one; nothing is overwritten. Retractions keep the original row with a reason.
+- When the current observation passes 180 days, only the review-based evidence and factor stop contributing; all other activity evidence is unaffected. The record shows "re-check needed", and the app never refreshes it by itself.
+- Scores computed while an observation was valid keep it in their factor ledger, so historical scores stay explainable.
+
+### Qualified prospect (definition used by the niche comparison and campaigns)
+
+A location is **qualified** when all of the following hold (thresholds in `scoring.yaml`):
+1. It is not closed, a duplicate, a chain or franchise location, hard-excluded or on the do-not-contact list.
+2. It is inside an enabled target area.
+3. Operating evidence ≥ 3 points (§4.3).
+4. It has a website-related opportunity: website status `none_found` / `inaccessible` / `inactive`, presence `facebook_only` / `instagram_only` / `social_only` / `directory_only`, or WQS < 70.
+5. It has at least one usable contact channel (phone, email, contact form or mailing address) whose verification state is not `conflicting`.
+
+In Phases 1–2, where some inputs are unknown, the comparison reports *provisionally qualified* and *needs research* counts separately.
 
 ### Factor ledger (explainability)
 
@@ -237,6 +277,10 @@ Every score writes one row per factor, and the lead profile shows them all:
 8. Franchise locations score below comparable independents.
 9. Every score has ≥ 1 factor-ledger row per non-zero component, and every factor references evidence.
 10. Gap statements and recommendations contain no revenue-increase claims (wording lint).
+11. **Cap with stacked signals:** a property-based test generates registry-only records with every combination of positive filing kinds, positive keyword groups, recency and DBA links (and no evidence). BOS never exceeds 35, and LPS never exceeds 35, in any combination.
+12. A stale manual observation removes only its own review points; other evidence points and factors are unchanged, and the observation remains retrievable.
+13. With equal inputs, a lead whose contacts are only `ingested` has a lower LPS than one whose contacts are `verified`.
+14. "Trusted Lawn Care" and "Capital City Cleaning" receive no negative-keyword penalty; "Coastal Capital Holdings LLC" does.
 
 ---
 

@@ -1,6 +1,6 @@
 # LeadIntel consolidated roadmap (v0.3)
 
-Status: **proposal for review, updated 2026-11-03 with your decisions (§5).** No Phase 1 code has been written, and Phase 1 starts only after you approve the implementation sequence (§2). This merges three sets of requirements into one roadmap:
+Status: **final architecture proposal, 2026-11-03.** Your decisions are recorded in §5 and the architecture review findings in [REVIEW.md](REVIEW.md); foundation decisions awaiting approval are in §6. No Phase 1 code has been written, and Phase 1 starts only after you approve the implementation sequence (§2). This merges three sets of requirements into one roadmap:
 - the original brief (v0.1);
 - the free-first architecture (v0.2, [PLAN.md](PLAN.md));
 - the network layer in PR [fy1fu/leadintel#1](https://github.com/fy1fu/leadintel/pull/1), not yet merged;
@@ -66,7 +66,7 @@ Where a v0.3 requirement *extends* a planned component, it is listed as 📋 + �
 | Facebook-only, Instagram-only, social-only, directory-only presence | 📋 + 🆕 | v0.2 had a single "social-only" flag. v0.3 needs a separate **presence type** axis (SCORING.md §1). |
 | "Reasonably good" vs "outdated" website | 📋 | WQS bands (v0.1) mapped to presence categories |
 | Free evidence that a business is established | 🆕 | Overture multi-source confirmation and open status, DBPR licence original-issue date, BTR, Sunbiz formation date, Wayback first-seen, social profile presence. **Verified 2026-11-02:** Overture lists social-only or no-web/no-social businesses in every target niche, nearly all with phones (SCORING.md §1.3). |
-| Listing with reviews, review count and rating | 🆕 (manual) + 🔭 (paid) | **Not available from any free source we use**; Overture has no review fields (verified). **Decided:** manual observations. Each one stores listing URL, platform, review count, rating (optional), observation date, who observed it and a verification status. It is labelled *manually observed* everywhere it appears and **is never refreshed automatically**; it shows its age ("observed 41 days ago"). Google Places stays optional (§1.11). Scraping Google or Yelp is excluded (terms of service). |
+| Listing with reviews, review count and rating | 🆕 (manual) + 🔭 (paid) | **Not available from any free source we use**; Overture has no review fields (verified). **Decided:** manual observations. Each one stores listing URL, platform, review count, rating (optional), observation date, who observed it and a verification status. It is labelled *manually observed* everywhere it appears and **is never refreshed automatically**; it shows its age ("observed 41 days ago"). **History is append-only:** re-checks add rows, and after 180 days only the review evidence stops counting (other activity evidence is unaffected) while the original stays available for audit. Google Places stays optional (§1.11). Scraping Google or Yelp is excluded (terms of service). |
 
 ### 1.4 Scoring model — v0.3 §4
 
@@ -87,6 +87,7 @@ Where a v0.3 requirement *extends* a planned component, it is listed as 📋 + �
 | Initial niches (home services, mobile/automotive, marine/coastal) | 🆕 | Seed profiles with taxonomy mappings to Overture categories, OSM tags, DBPR licence types and BTR occupation codes |
 | Compare lead quality by industry; industries with most no-website businesses; highest average BOS | 📋 + 🆕 | v0.2 coverage dashboard has industry coverage. Add opportunity aggregates per industry. |
 | Track replies and sales by industry; learn conversion rates | 🆕 | Depends on CRM (§1.9) and analytics (§1.10) |
+| Industry priority (user-assigned) | 🆕 + 🔧 | Proposed (§6 F9): orders discovery work, default list sorting and campaign tie-breaks. It **does not change BOS or LPS**, which describe the business, not the user's preference. |
 | **Niche comparison report** (decided: no niche fixed yet; cleaning and landscaping first candidates) | 🆕 | Side-by-side per niche and area: businesses discovered; no independent website; social-only; outdated website; qualified prospects; average BOS and LPS; contact availability (phone / email / form / mail-only); confidence and source completeness. **No automatic winner and no ranking by size.** Each metric shows its coverage, so a niche with incomplete discovery isn't compared as if it were complete. Counts become available in stages: discovery in Phase 1, presence in Phase 2, scores in Phase 3. |
 
 ### 1.6 First-campaign workflow — v0.3 §6
@@ -102,6 +103,7 @@ Where a v0.3 requirement *extends* a planned component, it is listed as 📋 + �
 | Requirement | Status | Basis / delta |
 |---|---|---|
 | Comparable local peers per (profile, market), excluding national chains | 📋 | v0.1 §6.4 benchmark sets |
+| Search visibility "where measurable" | 🆕 (limited) | No free search-ranking data source exists in the free-first design. Only on-site SEO signals (titles, schema, local pages, indexability) are measured. Ranking positions are not reported. |
 | Feature gap: what competitors offer that the prospect lacks (quote form, service areas, gallery, reviews, CTAs, mobile) | 📋 + 🆕 | Peer feature matrix existed. Add a prospect-facing **gap table**. |
 | Competitors' presence when the prospect has no website | 🆕 | Peer presence distribution, e.g. "18 of 24 local pressure-washing businesses have their own site" |
 | No claims of specific revenue increases | 🆕 | Report wording rule plus a test: gap statements are factual comparisons only |
@@ -117,7 +119,7 @@ Section 8 arrived redacted and nothing has been assumed for it. **Decided: websi
 | Basic lead statuses, notes, lists | 📋 | v0.1 lead management |
 | Full pipeline statuses (New lead … Do not contact), contact history, follow-ups, next action, proposal / expected / actual value, MRR, reason lost | 🆕 | Replaces the v0.1 status set; old values map to new ones (DATA_MODEL.md §5) |
 | Manually tracked channels: phone, email, physical mail, in-person visit | 🆕 | `contact_event` log, follow-up dates, notes, outcomes. **Decided: manual outreach only.** No automated bulk email, automated calls or unsolicited messaging, and no sending integrations. |
-| Outreach compliance safeguards | 🆕 | Do-not-contact list enforced everywhere; per-channel consent / basis notes; contact-frequency limits; warnings for phone/SMS outreach (federal TCPA, the Florida Telephone Solicitation Act and the National Do Not Call Registry) and email (CAN-SPAM). These are product safeguards, not legal advice. |
+| Outreach compliance safeguards | 🆕 | Do-not-contact list enforced everywhere (blocks follow-ups, campaign inclusion, outbound logging and export of that contact point); per-channel basis notes; contact-frequency reminders. Phone outreach shows warnings about the federal TCPA, the Florida Telephone Solicitation Act and the National Do Not Call Registry; email shows CAN-SPAM. **Text messaging is not a supported channel.** These are product safeguards, not legal advice. |
 | Configurable service packages (one-page site, hosting, maintenance, GBP setup, SEO …) and pricing | 🆕 | `package` / `package_item`; no hard-coded prices |
 | GBP setup requires owner authorization | 🆕 | A package item cannot be marked delivered without a recorded owner-authorization note |
 | Estimated cost, profit, MRR | 🆕 | Derived from packages and deals |
@@ -140,18 +142,18 @@ Section 8 arrived redacted and nothing has been assumed for it. **Decided: websi
 
 ### 1.12 Cross-cutting (unchanged requirements, current status)
 
-| Capability | Status |
-|---|---|
-| Network registry, staged diagnostics, required/optional classification | ✅ |
-| Overture three-mirror failover + bounding-box reader | ✅ (reader); 📋 normalizing adapter |
-| Partial-download recovery, MD5/size integrity, atomic install (OSM) | ✅ |
-| Paid-provider blocking | ✅ |
-| SSRF-safe crawling client | ✅ (client); 📋 crawler (robots.txt, page selection) |
-| Explicit incomplete-search / coverage states | ✅ in diagnostics and OSM planning; 📋 coverage records per discovery run |
-| Map (MapLibre + OpenFreeMap), area search, dashboard | 📋 |
-| DBPR, Duval BTR, NPI adapters | 📋 (endpoints verified; Duval report portal behind a bot challenge) |
-| Local AI provider (Ollama) / `none` provider | 📋 |
-| Coverage dashboard | 📋 |
+| Capability | Status | Notes |
+|---|---|---|
+| Network registry, staged diagnostics, required/optional classification | ✅ | PR #1 |
+| Overture three-mirror failover + bounding-box reader | ✅ / 📋 | Reader done; normalizing adapter and local per-release cache planned (§6 F6) |
+| Partial-download recovery, MD5/size integrity, atomic install (OSM) | ✅ | PR #1 |
+| Paid-provider blocking | ✅ | PR #1; every outbound path goes through the cost guard |
+| SSRF-safe crawling client | ✅ / 📋 | Client done; crawler (robots.txt, page selection) planned |
+| Explicit incomplete-search / coverage states | ✅ / 📋 | Done in diagnostics and OSM planning; coverage records per discovery run planned |
+| Map (MapLibre + OpenFreeMap), area search, dashboard | 📋 | |
+| DBPR, BTR, NPI adapters | 📋 | Endpoints verified. Duval's report portal is behind a bot challenge. St. Johns and Clay are under investigation (non-blocking); a **generic BTR manual-CSV importer** covers any county |
+| Local AI provider (Ollama) / `none` provider | 📋 | |
+| Coverage dashboard | 📋 | |
 | Configurable geography: counties, cities, ZIP codes, radius, polygons, other states | 📋 + 🆕 | v0.2 area resolver on TIGER boundaries. **Decided initial targets: Duval, St. Johns and Clay counties.** Targets are configuration (`config/areas.yaml`), not code; adding a Florida county is config plus any county-specific record adapter (e.g. BTR). Other states need their own registry adapters (Sunbiz is Florida-only); Overture, OSM, NPI and Census work nationwide. |
 | Network diagnostics runnable without the main database | ✅ | Own store (`LEADINTEL_NETDIAG_DB_URL`), memory fallback, `--no-store`; tested |
 
@@ -182,12 +184,14 @@ The v0.3 priority order is adopted. Each phase ends with real-data acceptance te
    - filing-kind mapping and address roles;
    - registered-agent / mass-filer detection;
    - DBA → entity linking.
-3. **Overture adapter**: normalize (empty-string websites, phone E.164, social URL classification) on top of the ✅ reader.
-4. **DBPR adapter** (licence CSVs); **Duval BTR**: Tax Collector data where obtainable, otherwise manual CSV import (the portal challenge is never bypassed).
-5. **Entity resolution v1**: organization / location / alias, DBA edges, review queue.
+3. **Overture adapter**: normalize (empty-string websites, phone E.164, social/listing URL classification) on top of the ✅ reader, plus a **local per-release cache** of the target counties so searches don't re-read remote files.
+4. **DBPR adapter** (licence CSVs). **BTR:** a generic manual-CSV importer for any county; automated Duval import where obtainable (the portal challenge is never bypassed); St. Johns and Clay investigated in parallel, **not blocking Phase 1**.
+5. **Entity resolution v1**: organization / location / alias, `location_organization` and DBA edges, review queue, reversible merges (`merge_event`).
 6. **Keyword engine + industry targeting v1**: `keywords.yaml`, `industries/*.yaml` with the initial niches.
 7. **County filtering, CSV export, minimal map + list UI** (v0.2), so results are inspectable.
 8. **Data-quality layer**: fact verification states, source reliability, completeness flags, quarantine counts in coverage.
+   - Import success counts and verified-field counts are always reported separately.
+   - The provisional scoring pipeline (SCORING.md §4.4) with the evidence cap runs from Phase 1, so no early ranking can bypass the cap.
 9. **Niche comparison report v1** (discovery-level metrics for cleaning and landscaping across the three counties).
 
 **Acceptance criteria:**
@@ -197,6 +201,7 @@ The v0.3 priority order is adopted. Each phase ends with real-data acceptance te
 - Registered-agent addresses never appear as operating locations.
 - A day with a missing file shows coverage `partial`, never "no new businesses".
 - Malformed lines land in quarantine.
+- The stacked-signal cap test (SCORING.md §7, invariant 11) passes on provisional scores.
 - Import success counts are never presented as verified-business counts.
 - Network diagnostics still run with the business database stopped.
 - 0 paid calls.
@@ -293,12 +298,35 @@ All steps must be completed and recorded before `allow_paid` can be set for `goo
 | D7 | Data quality: ingestion ≠ verification; source reliability, field confidence, timestamps and completeness tracked (§1.13). |
 | D8 | BOS cap for records without trading evidence is preserved and tested explicitly. |
 | D9 | Network diagnostics must run independently of the business database (implemented in PR #1). |
+| D10 | Manual observations are append-only. After 180 days only the review evidence stops counting; history is kept for audit (2026-11-03). |
+| D11 | St. Johns / Clay BTR availability **does not block Phase 1**; a manual CSV import covers any county (2026-11-03). |
+| D12 | The imported-vs-verified distinction is kept everywhere: UI, exports, scores (LPS verification multipliers), and reports (2026-11-03). |
+| D13 | The evidence cap applies after all positive filing, keyword and recency signals, as the last step of the one scoring pipeline (2026-11-03). |
 
 ### Still open
 
 | # | Item |
 |---|---|
-| O1 | **Your approval of the implementation sequence (§2).** Phase 1 does not start before it. |
+| O1 | **Approval of the foundation decisions (§6) and the implementation sequence (§2).** Phase 1 does not start before it. |
 | O2 | Code review and Windows test run of PR #1 (procedure in PR #1 and `SUNBIZ.md` §7). |
-| O3 | Clay County BTR availability. Duval's portal is behind a bot challenge; St. Johns and Clay not yet checked. This decides automated vs manual-CSV BTR import per county. |
-| O4 | Verification items V1–V9 and V11 in [VERIFICATION.md](VERIFICATION.md). |
+| O3 | Verification items in [VERIFICATION.md](VERIFICATION.md). None block Phase 1 except V4 (Geofabrik) for the OSM source specifically. |
+
+---
+
+## 6. Foundation decisions for approval
+
+These are the choices that would be expensive to change after Phase 1 starts. Each has a recommendation.
+
+| # | Decision | Recommendation | Why it matters |
+|---|---|---|---|
+| F1 | **Where user-editable configuration lives** (keywords, industries, scoring weights, areas) | Postgres `config_version` rows are the source of truth, each with full content, hash, author and approval. The YAML files in `config/` are **seed defaults** and an export/import format. `network.yaml` stays file-only, so diagnostics need no database. | The UI must edit keywords and weights, and outcome tuning must be approved and reverted. Making files canonical now would force a rewrite when UI editing arrives. |
+| F2 | **Deployment on your Windows computer** | Native installs: PostgreSQL 16 + PostGIS (EDB installer / Stack Builder), Python 3.13, Node LTS; the app runs as local processes. Docker Compose stays optional. | Docker Desktop's terms make it free only for personal use and small businesses (under 250 employees *and* under $10M revenue) [secondary; re-check Docker's current terms], and it adds a VM layer. Native installs avoid both. Needs your confirmation of the target machine. |
+| F3 | **Address normalization library** | `usaddress` (pure Python), plus Census geocoder results | libpostal needs a large C library that is difficult on Windows. Changing the normalizer later changes every match key. |
+| F4 | **Users and access** | Single-user local app. The API binds to `127.0.0.1` only, actor columns exist (DATA_MODEL.md §0), and there is no login in v1. | Multi-user later is additive (auth layer) because actor columns already exist. Binding to localhost matters because the API has no authentication. |
+| F5 | **Schema conventions** | As in DATA_MODEL.md §0: bigint keys + natural-key uniques, UTC `timestamptz`, EPSG:4326, append-only history tables, soft retraction | These are expensive to change once data exists |
+| F6 | **Overture access pattern** | Per release, download only row groups intersecting the enabled target areas into a local GeoParquet cache; discovery queries the cache; refresh on new monthly releases | Avoids re-reading hundreds of MB per search; makes discovery repeatable and offline-capable |
+| F7 | **Background jobs** | Procrastinate (Postgres-backed) for imports, crawling and scoring. Network diagnostics stay a plain CLI/API call outside the queue. | Keeps diagnostics independent (D9) |
+| F8 | **"Qualified prospect" definition** | As in SCORING.md §6 (operating evidence ≥ 3, website-related opportunity, usable non-conflicting contact, in target area, not excluded) | The niche comparison and campaigns both depend on it |
+| F9 | **Meaning of industry priority** | Orders work and default sorting only; **never changes BOS/LPS** | Prevents user preference from distorting opportunity scores |
+| F10 | **Fact TTLs (staleness)** | Phone / email / website 90 days; operating status 60 days; registry status from events (daily); manual observations 180 days for scoring (never auto-refreshed) | Drives refresh work and LPS freshness |
+| F11 | **Weights are starting points** | Ship the documented defaults; first calibration uses your labelled sample in Phase 3 | Avoids treating initial numbers as validated |

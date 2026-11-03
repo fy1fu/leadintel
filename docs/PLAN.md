@@ -1,10 +1,11 @@
 # LeadIntel: Architecture & Implementation Plan
 
-Status: **v0.3 (2026-11-02).** The v0.2 free-first architecture below remains in force. v0.3 adds high-intent lead discovery, niche targeting and customer acquisition. It is consolidated in:
+Status: **v0.3 (2026-11-03).** The v0.2 free-first architecture below remains in force. v0.3 adds high-intent lead discovery, niche targeting and customer acquisition. It is consolidated in:
 - [ROADMAP.md](ROADMAP.md): every requirement classified as implemented / planned / new / optional, plus the revised five phases. **This supersedes §11 below.**
 - [SCORING.md](SCORING.md): presence classification, keyword scoring, WQS / BOS / LPS. **This supersedes §7 and restores the v0.1 formulas.**
 - [DATA_MODEL.md](DATA_MODEL.md): consolidated schema. **This supersedes §8.**
-- [SUNBIZ.md](SUNBIZ.md), [NETWORK.md](NETWORK.md), [VERIFICATION.md](VERIFICATION.md).
+- [SUNBIZ.md](SUNBIZ.md), [NETWORK.md](NETWORK.md), [VERIFICATION.md](VERIFICATION.md), [REVIEW.md](REVIEW.md) (architecture review).
+- Superseded details inside this file: §9.1 deployment, now native Windows installs recommended (ROADMAP.md §6 F2); §9.2 layout, which additionally gets `targeting/`, `campaigns/`, `crm/`, `packages/` and `analytics/` modules. Network diagnostics keep their own store (NETWORK.md §6).
 
 v0.2 superseded v0.1, which assumed Google Places, Google Maps and paid search APIs.
 
