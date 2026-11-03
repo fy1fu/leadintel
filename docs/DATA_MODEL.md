@@ -23,7 +23,7 @@ Legend: 📋 already designed · 🆕 new in v0.3 · ✅ exists in PR #1 · 🔧
 | `source` | 📋 + 🆕 | `key`, `cost_class`, `licence`, `attribution`, `enabled`. **New:** `reliability` (default per field group, from `config/sources.yaml`), `reliability_notes` |
 | `source_record` | 📋 + 🆕 | `source`, `external_id`, `fetched_at`, `payload`, `payload_hash`, `licence_tag`. **New:** `raw_line` (bytes), `file_name`, `line_no`, `file_sha256`, so every Sunbiz/DBPR lead reproduces its original line. |
 | `source_file` | 🆕 | `source`, `kind` (`cor` / `cor_event` / `fic` / `fic_event` / `quarterly` / `dbpr` …), `logical_date`, `remote_path`, `size`, `remote_last_modified`, `sha256`, `status` (`verified` / `failed` / `superseded`), `records`, `quarantined` |
-| `source_date_ledger` | 🆕 | `source`, `kind`, `date`, `state` (`verified` / `not_yet_published` / `absent_holiday` / `absent_unexplained` / `failed`), `checked_at`. Drives coverage for date filters. |
+| `source_date_ledger` | 🆕 | `source`, `kind`, `date`, `state` (`verified` / `not_yet_published` / `absent_holiday` / `absent_nonworkday` / `absent_unexplained` / `failed`), `checked_at`. Drives coverage for date filters; `absent_unexplained` and `failed` make coverage `partial`. |
 | `quarantine_record` | 🆕 | `source_file_id`, `line_no`, `raw_line`, `reason`, `field` |
 | `fact` | 📋 + 🆕 | Per-field provenance: `provenance` ∈ directory / website / registry / inferred / **manual** 🆕; `observed_at`, `fetched_at`, `last_verified_at`, `confidence`. **New:** `verification_state` ∈ `ingested` / `corroborated` / `verified` / `conflicting` / `stale`, and `ttl_days`. Ingestion alone never sets `verified`. |
 | `area` | 📋 + 🔧 | **One table** for saved search areas and campaign targets (replaces the separate v0.1 `search_area` and v0.3 `target_area`): `kind` (county / city / ZIP / radius / polygon / state / multi), `spec`, `geom`, `is_target`, `enabled`. Seeded from `config/areas.yaml` (Duval, St. Johns, Clay). |
@@ -88,3 +88,20 @@ Legend: 📋 already designed · 🆕 new in v0.3 · ✅ exists in PR #1 · 🔧
 | `deal` | 🆕 | `lead_id`, `package_id`, `proposal_amount`, `expected_value`, `actual_value`, `mrr`, `status`, `won_at` / `lost_at`, `reason_lost` |
 | `authorization_record` | 🆕 | e.g. Google Business Profile owner authorization: who, when, method. Required before such package items can be marked delivered. |
 | `outcome_snapshot` | 🆕 | Frozen attribution at first contact (industry, source, presence type, scores, config version) for conversion analytics |
+
+## 6. As implemented in Phase 1 (migrations 0001-0002)
+
+Implemented tables:
+- **Sources and provenance:** `config_version`, `source`, `source_file`, `source_date_ledger`, `source_record`, `quarantine_record`, `fact`.
+- **Geography and runs:** `area`, `discovery_run`, `coverage`, `geocode_cache`.
+- **Organizations:** `organization`, `organization_link`, `person_role`, `address`.
+- **Locations:** `location`, `location_alias`, `location_source_link`, `location_organization`, `online_profile`, `contact_point`, `location_contact`.
+- **Resolution:** `review_queue`, `merge_event`.
+- **Scoring:** `keyword_hit`, `score`, `score_factor`, `qualification`.
+
+Differences from the design above, decided during implementation:
+- `location_contact` links locations to normalized `contact_point`s (with source and verification state). `fact` rows keep the per-field provenance.
+- `score.inputs_hash`: a score is re-written only when its inputs or config versions change, so history stays append-only without churn.
+- `qualification` is its own append-only table (status + reasons + stage), separate from `score` (F8).
+- Network diagnostics tables remain in the separate diagnostics store.
+- CRM, campaign, package and deal tables are **not** created in Phase 1 (Phase 4–5).

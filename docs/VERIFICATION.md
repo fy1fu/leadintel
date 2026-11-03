@@ -1,6 +1,6 @@
 # Open verification items (before Phase 1)
 
-Status as of 2026-11-03. Items are closed only by a real request or a real data check, never by assumption.
+Status as of 2026-11-03 (updated during Phase 1). Items are closed only by a real request or a real data check, never by assumption.
 
 **Completeness** items can make LeadIntel miss businesses or evidence; results are labelled `partial` in coverage. **Correctness** items can make stored values wrong; they are guarded by validation and tests until closed.
 
@@ -19,5 +19,7 @@ Status as of 2026-11-03. Items are closed only by a real request or a real data 
 | V11 | Review-count evidence from free sources | Overture has no review fields (verified). No permitted free bulk source identified. | **Completeness** (review evidence only by manual observation) | No (manual entry planned) | Manual research fields, or Google Places after the [ROADMAP.md §4](ROADMAP.md) checklist |
 
 | V12 | Windows run of the PR #1 test suite and live diagnostics | Not yet run; Windows-specific socket handling added, not exercised | **Correctness** (platform-specific behaviour on Windows) | Before merging PR #1 | Procedure in PR #1 description |
+| V13 | DBPR licensee CSV column meanings (no published layout found); county codes (Duval 26, Clay 20, St. Johns 65) | Inferred from data; county codes consistent with every sampled city and cross-checked against ZIP->county on import (mismatches counted) | **Correctness** (licence evidence attribution) | No (evidence only; never creates prospects) | Find the official DBPR extract layout or ask DBPR |
+| V14 | One real Sunbiz corporate record with document number `11` (file 20261027c.txt, line 220) | Quarantined, not guessed | Correctness (single record) | No | Re-check after the next quarterly file |
 
 The v0.3 requirements are consolidated in [ROADMAP.md](ROADMAP.md); the 2026-11-03 architecture review is in [REVIEW.md](REVIEW.md).
