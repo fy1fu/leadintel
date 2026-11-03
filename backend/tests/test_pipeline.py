@@ -55,6 +55,7 @@ def test_failed_source_is_recorded_as_failed_not_as_zero_businesses(db, tmp_path
     assert {a for _, a in cov} == {"duval", "st_johns", "clay"}
     assert all(cov[("overture", a)]["state"] == "failed" and "outage" in cov[("overture", a)]["reason"] for a in ("duval", "st_johns", "clay"))
     assert all(cov[("sunbiz", a)]["state"] == "not_run" for a in ("duval", "st_johns", "clay"))
+    assert all(cov[("dbpr", a)]["state"] == "failed" for a in ("duval", "st_johns", "clay"))
     assert res.counts["paid_requests"] == 0
     with db.connect() as conn:
         assert conn.execute(text("select count(*) from location")).scalar() == 0

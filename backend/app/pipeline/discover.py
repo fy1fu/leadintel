@@ -147,6 +147,7 @@ def _run_locked(settings, engine, cfg, reg, guard, client, area_keys, since, unt
                 s.commit()
         else:
             _cov(s, run.id, "overture", areas, "not_run", "disabled for this run")
+            s.commit()
 
         # ---------------------------------------------------------------- Sunbiz
         if sunbiz:
@@ -177,6 +178,7 @@ def _run_locked(settings, engine, cfg, reg, guard, client, area_keys, since, unt
                 s.commit()
         else:
             _cov(s, run.id, "sunbiz", areas, "not_run", "disabled for this run")
+            s.commit()
 
         # ---------------------------------------------------------------- DBPR licence evidence (M3)
         dbpr_cfg = cfg["sources"]["sources"].get("dbpr")
