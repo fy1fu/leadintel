@@ -95,7 +95,8 @@ def _sources():
 
 
 ENGINE_FACTORIES = {"app/db/session.py", "app/db/locks.py", "app/net/store.py", "migrations/env.py"}
-COMMIT_SITES = {"app/cli.py", "app/pipeline/discover.py", "app/db/session.py"}
+COMMIT_SITES = {"app/cli.py", "app/pipeline/discover.py", "app/db/session.py",
+                "app/sources/btr/storage.py"}   # import-btr (Phase B0), runs under the lock and the gate
 # Modules that write inside the managed data folder; each must call ensure_write_allowed.
 MANAGED_FILE_WRITERS = {"app/sources/common.py", "app/sources/overture/snapshot.py", "app/sources/osm/extracts.py",
                         "app/sources/btr/storage.py"}

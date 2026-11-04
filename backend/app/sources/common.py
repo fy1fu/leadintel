@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -112,6 +113,30 @@ SOURCE_FILE_LAYOUTS = {             # source_file.kind -> folder inside the data
     "dbpr_licensees": ("dbpr",),
     "boundary_county": ("boundaries",),
 }
+# Manually imported BTR CSVs: since Phase B0 they are copied to `btr/<county>/<file>` (relative row path);
+# rows written earlier keep their absolute path to the user's own file (external).
+BTR_KIND = "btr_csv"
+COUNTY_KEY = re.compile(r"[a-z][a-z0-9_]{0,39}")
+WINDOWS_RESERVED = frozenset({"con", "prn", "aux", "nul", *(f"com{i}" for i in range(10)),
+                              *(f"lpt{i}" for i in range(10))})
+
+
+def valid_county_key(key: str) -> bool:
+    return bool(COUNTY_KEY.fullmatch(key or "")) and key not in WINDOWS_RESERVED
+
+
+def managed_btr_relpath(stored: str | None) -> tuple[str, str, str] | None:
+    """The parts of a relative managed BTR path `btr/<county>/<file>`, or None if it is not exactly that."""
+    if not stored:
+        return None
+    win = not stored.startswith("/") and ("\\" in stored or (len(stored) > 1 and stored[1] == ":"))
+    pure = PureWindowsPath(stored) if win else PurePosixPath(stored)
+    parts = pure.parts
+    if pure.is_absolute() or len(parts) != 3 or parts[0] != "btr" or not valid_county_key(parts[1]):
+        return None
+    if parts[2] in ("", ".", ".."):
+        return None
+    return parts  # type: ignore[return-value]
 
 
 def resolve_local_path(stored: str | None, data_dir: Path, *, kind: str) -> Path | None:
@@ -124,9 +149,11 @@ def resolve_local_path(stored: str | None, data_dir: Path, *, kind: str) -> Path
         that (the old data folder, whatever its name) is ignored. A missing copy gives None: the stored
         absolute path is never used, so a moved data folder never reads files from the folder it was
         moved away from.
-    * Any other kind (e.g. `btr_csv`, a manually supplied file) is external: only an absolute stored path
-      is accepted, and only if it is an existing file. It is never mapped into `data_dir`, and a relative
-      entry is never interpreted against the current working directory.
+    * `btr_csv` is a hybrid: a relative entry must be exactly `btr/<county>/<file>` (managed copy, Phase B0)
+      and is looked up inside `data_dir`; an absolute entry is a historical external file (next point).
+    * Any other kind (and an absolute `btr_csv` entry) is external: only an absolute stored path is accepted,
+      and only if it is an existing file. It is never mapped into `data_dir`, and a relative entry is never
+      interpreted against the current working directory.
     Only regular files are returned, as resolved paths. This establishes where a file is, not what it
     contains: callers must still compare its SHA-256 with the row's before using it.
     """
@@ -137,6 +164,13 @@ def resolve_local_path(stored: str | None, data_dir: Path, *, kind: str) -> Path
     pure = PureWindowsPath(stored) if win else PurePosixPath(stored)
     parts = pure.parts
     layout = SOURCE_FILE_LAYOUTS.get(kind)
+    if kind == BTR_KIND and not pure.is_absolute():
+        managed = managed_btr_relpath(stored)
+        if managed is None:
+            return None
+        root = Path(data_dir).resolve()
+        resolved = root.joinpath(*managed).resolve()
+        return resolved if resolved.is_file() and resolved.is_relative_to(root) else None
     if layout is None:
         if not pure.is_absolute() or ".." in parts:
             return None

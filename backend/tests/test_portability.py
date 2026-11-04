@@ -396,3 +396,43 @@ def test_resolver_rejects_relative_traversal(tmp_path, stored):
     _write_source_file(data, ("dbpr",), "x.csv")
 
     assert resolve_local_path(stored, data, kind="dbpr_licensees") is None
+
+
+# ---------------------------------------------------------------- Phase B0: managed BTR copies (hybrid btr_csv)
+def test_r1_managed_btr_path_resolves_inside_the_data_folder(tmp_path):
+    data = tmp_path / "data"
+    f = data / "btr" / "st_johns" / "export.0123456789ab.csv"
+    f.parent.mkdir(parents=True)
+    f.write_text("x")
+    assert resolve_local_path("btr/st_johns/export.0123456789ab.csv", data, kind="btr_csv") == f.resolve()
+    assert resolve_local_path(r"btr\st_johns\export.0123456789ab.csv", data, kind="btr_csv") == f.resolve()
+
+
+@pytest.mark.parametrize("stored", ["btr/../dbpr/x.csv", "btr/Duval/x.csv", "btr/con/x.csv", "btr/duval/sub/x.csv",
+                                    "btr/x.csv", "btr/duval", "btr/1duval/x.csv", "btr/duval/.."])
+def test_r2_malformed_managed_btr_paths_give_none(tmp_path, stored):
+    data = tmp_path / "data"
+    (data / "btr" / "duval" / "sub").mkdir(parents=True)
+    (data / "btr" / "duval" / "sub" / "x.csv").write_text("x")
+    (data / "btr" / "x.csv").write_text("x")
+    assert resolve_local_path(stored, data, kind="btr_csv") is None
+
+
+def test_r3_absolute_btr_paths_remain_external(tmp_path):
+    data = tmp_path / "data"
+    users = tmp_path / "Downloads" / "btr" / "duval" / "export.csv"      # looks like the layout, but is external
+    users.parent.mkdir(parents=True)
+    users.write_text("mine")
+    (data / "btr" / "duval").mkdir(parents=True)
+    (data / "btr" / "duval" / "export.csv").write_text("decoy")
+    assert resolve_local_path(str(users), data, kind="btr_csv") == users.resolve()
+    assert resolve_local_path(str(tmp_path / "gone.csv"), data, kind="btr_csv") is None
+
+
+def test_r4_relative_btr_paths_outside_btr_are_never_resolved(tmp_path, monkeypatch):
+    data = tmp_path / "data"
+    (data / "dbpr").mkdir(parents=True)
+    (data / "dbpr" / "x.csv").write_text("x")
+    monkeypatch.chdir(data)
+    for stored in ("dbpr/x.csv", "x.csv", "data/btr/duval/x.csv"):
+        assert resolve_local_path(stored, data, kind="btr_csv") is None

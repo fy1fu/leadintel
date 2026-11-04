@@ -64,8 +64,25 @@ def validate_mapping(header: list[str], mapping: dict[str, str]) -> None:
 
 def import_btr_csv(s: Session, src: Source, sf: SourceFile, blob: bytes, mapping: dict[str, str], county_fips: str,
                    *, today: date | None = None, min_similarity: float = 0.85) -> BtrStats:
+    """Import from bytes already in memory (unchanged behaviour; used by tests and small callers)."""
+    return import_btr_stream(s, src, sf, io.StringIO(blob.decode("utf-8-sig", errors="replace")), mapping,
+                             county_fips, today=today, min_similarity=min_similarity)
+
+
+def open_csv_text(binary) -> io.TextIOWrapper:
+    """Text view of a binary CSV stream, decoded exactly as `import_btr_csv` decodes bytes.
+
+    `newline="\n"` reproduces `io.StringIO`'s line handling, so streaming and in-memory imports behave
+    identically (including the existing refusal of files whose rows end with a bare carriage return).
+    """
+    return io.TextIOWrapper(binary, encoding="utf-8-sig", errors="replace", newline="\n")
+
+
+def import_btr_stream(s: Session, src: Source, sf: SourceFile, text_stream, mapping: dict[str, str], county_fips: str,
+                      *, today: date | None = None, min_similarity: float = 0.85) -> BtrStats:
+    """Import rows from a text stream, one row at a time (Phase B0: large files are never held in memory)."""
     today = today or date.today()
-    reader = csv.DictReader(io.StringIO(blob.decode("utf-8-sig", errors="replace")))
+    reader = csv.DictReader(text_stream)
     validate_mapping(reader.fieldnames or [], mapping)
     st = BtrStats()
     for line_no, raw in enumerate(reader, start=2):

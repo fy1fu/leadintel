@@ -1,35 +1,43 @@
+"""`leadintel import-btr` (Phase B0, test T1): the CSV is copied into the managed data folder as
+btr/<county>/<safe name>.<sha12>.csv, registered by that path, and imported from that verified copy.
+Database-free: the session, the lock and the importer are fakes; the copy itself is real.
+"""
+import hashlib
 from contextlib import contextmanager
-from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import sqlalchemy.orm
 
 import app.config
 import app.db.locks
 import app.db.session
-import app.sources.btr.csv_import
-import app.sources.common
+import app.sources.btr.storage as storage
 from app.cli import main
 
+pytestmark = pytest.mark.usefixtures("unlocked_files")
 
-def test_import_btr_resolves_relative_csv_path_before_registration(monkeypatch, tmp_path):
+
+def test_import_btr_copies_the_csv_into_managed_storage_and_imports_that_copy(monkeypatch, tmp_path):
     working = tmp_path / "working"
     working.mkdir()
-
+    csv_bytes = b"Business Name,Location Address,Zip,Receipt #\nExample LLC,1 Main St,32207,R-1\n"
     csv_path = working / "btr.csv"
-    csv_path.write_text("license_number,business_name\n1,Example\n")
-
+    csv_path.write_bytes(csv_bytes)
+    sha = hashlib.sha256(csv_bytes).hexdigest()
     mapping_path = working / "mapping.yaml"
-    mapping_path.write_text("business_name: business_name\n")
+    mapping_path.write_text("business_name: Business Name\naddress: Location Address\nzip: Zip\n"
+                            "receipt_number: 'Receipt #'\n")
+    data = tmp_path / "data"
 
     monkeypatch.chdir(working)
-    monkeypatch.setattr(app.config, "get_settings", lambda: SimpleNamespace(data_dir=tmp_path / "data"))
+    monkeypatch.setattr(app.config, "get_settings", lambda: SimpleNamespace(data_dir=data))
     monkeypatch.setattr(app.db.session, "make_engine", lambda settings: object())
     locks_taken = []
 
     @contextmanager
     def fake_lock(engine, operation, **kw):
-        locks_taken.append(operation)
+        locks_taken.append((operation, kw.get("data_dir")))
         yield None
 
     monkeypatch.setattr(app.db.locks, "maintenance_lock", fake_lock)
@@ -44,44 +52,40 @@ def test_import_btr_resolves_relative_csv_path_before_registration(monkeypatch, 
         def __exit__(self, *args):
             return False
 
-        def execute(self, *args, **kwargs):
-            return SimpleNamespace(scalar=lambda: "12031")
+        def execute(self, *args, **kwargs):     # area lookup -> geoid; existing-row lookup -> none
+            return SimpleNamespace(scalar=lambda: "12031", scalar_one_or_none=lambda: None)
 
         def commit(self):
             pass
 
-    monkeypatch.setattr(sqlalchemy.orm, "Session", FakeSession)
-    monkeypatch.setattr(
-        app.sources.common,
-        "ensure_source",
-        lambda *args, **kwargs: object(),
-    )
+        def rollback(self):
+            pass
 
+    monkeypatch.setattr(storage, "Session", FakeSession)
+    monkeypatch.setattr(storage, "ensure_source", lambda *args, **kwargs: SimpleNamespace(key="btr_duval"))
     captured = {}
 
-    def fake_register_file(session, source, *, kind, remote_path, dl, **kwargs):
-        captured["path"] = dl.path
-        captured["kind"] = kind
-        captured["remote_path"] = remote_path
-        return SimpleNamespace(id=17)
+    def fake_register_file(session, source, *, kind, remote_path, dl, data_dir=None, **kwargs):
+        captured.update(path=dl.path, sha=dl.sha256, kind=kind, remote_path=remote_path, data_dir=data_dir)
+        return SimpleNamespace(id=17, local_path="btr/duval/" + dl.path.name)
 
-    monkeypatch.setattr(app.sources.common, "register_file", fake_register_file)
-    monkeypatch.setattr(
-        app.sources.btr.csv_import,
-        "import_btr_csv",
-        lambda *args, **kwargs: SimpleNamespace(imported=1),
-    )
+    monkeypatch.setattr(storage, "register_file", fake_register_file)
 
-    result = main([
-        "import-btr",
-        "btr.csv",
-        "--county", "duval",
-        "--mapping", str(mapping_path),
-    ])
+    def fake_import(s, src, sf, stream, mapping, fips):
+        captured["imported_text"] = stream.read()
+        return SimpleNamespace(rows=1)
+
+    monkeypatch.setattr(storage, "import_btr_stream", fake_import)
+    monkeypatch.setattr(sqlalchemy.orm, "Session", FakeSession)
+
+    result = main(["import-btr", "btr.csv", "--county", "duval", "--mapping", str(mapping_path)])
 
     assert result == 0
-    assert locks_taken == ["import-btr"]
-    assert captured["kind"] == "btr_csv"
-    assert captured["path"] == csv_path.resolve()
-    assert Path(captured["path"]).is_absolute()
-    assert captured["remote_path"] == "manual:btr.csv"
+    managed = data / "btr" / "duval" / f"btr.{sha[:12]}.csv"
+    assert locks_taken == [("import-btr", data)]
+    assert captured["kind"] == "btr_csv" and captured["remote_path"] == "manual:btr.csv"
+    assert captured["path"] == managed and captured["data_dir"] == data and captured["sha"] == sha
+    assert managed.read_bytes() == csv_bytes                         # identical bytes in managed storage
+    assert csv_path.read_bytes() == csv_bytes                        # the user's file is untouched
+    assert captured["imported_text"] == csv_bytes.decode()           # imported from the verified copy
+    assert sorted(p.name for p in managed.parent.iterdir()) == [managed.name]   # no staging file left behind

@@ -73,6 +73,8 @@ def main(argv: list[str] | None = None) -> int:
         except LockLost as exc:
             print(f"leadintel: the maintenance lock was lost ({exc}); the operation stopped before any further "
                   "write. Run it again.", file=sys.stderr)
+            for note in getattr(exc, "__notes__", []):
+                print(f"leadintel: {note}", file=sys.stderr)
             return EXIT_LOCK_LOST
 
     ctx = build_context(persist=not args.no_store)
@@ -161,28 +163,27 @@ def _business(args) -> int:
                          indent=2, default=str))
         return 0 if res.status == "completed" else 4
     if args.cmd == "import-btr":
+        # Phase B0: the CSV is copied into the managed data folder (btr/<county>/) and imported from that
+        # verified copy; see app/sources/btr/storage.py for the full sequence and its guarantees.
         import yaml
-        from sqlalchemy import text
-        from sqlalchemy.orm import Session
 
         from app.db.session import make_engine
-        from app.sources.btr.csv_import import import_btr_csv
-        from app.sources.common import Downloaded, ensure_source, register_file, sha256_file
-        engine = make_engine(settings)
-        mapping = yaml.safe_load(open(args.mapping, encoding="utf-8"))
-        with locked(engine, "import-btr"), Session(engine) as s:
-            fips = s.execute(text("SELECT spec->>'geoid' FROM area WHERE key=:k"), {"k": args.county}).scalar()
-            if not fips:
-                print(f"unknown area {args.county}")
-                return 2
-            src = ensure_source(s, f"btr_{args.county}", {"name": f"{args.county} business tax receipts (manual CSV)",
-                                                          "licence": "Public record", "reliability": {"btr": 0.85}})
-            p = args.path.resolve()
-            sf = register_file(s, src, kind="btr_csv", remote_path=f"manual:{p.name}",
-                               dl=Downloaded(p, sha256_file(p), p.stat().st_size, True))
-            st = import_btr_csv(s, src, sf, p.read_bytes(), mapping, fips)
-            s.commit()
-        print(json.dumps({k: v for k, v in st.__dict__.items()}, indent=2, default=str))
+        from app.sources.btr.csv_import import MappingError
+        from app.sources.btr.storage import BtrImportError, prevalidate, run_btr_import
+        try:
+            with open(args.mapping, encoding="utf-8") as fh:
+                mapping = yaml.safe_load(fh)
+            limit = prevalidate(args.path, args.county, mapping)
+            engine = make_engine(settings)
+            with locked(engine, "import-btr"):
+                out = run_btr_import(engine, settings.data_dir, args.path, args.county, mapping, limit)
+        except (BtrImportError, MappingError, yaml.YAMLError, OSError) as exc:
+            print(f"leadintel import-btr: {exc}", file=sys.stderr)
+            for note in getattr(exc, "__notes__", []):
+                print(f"leadintel import-btr: {note}", file=sys.stderr)
+            return 2
+        print(json.dumps({"action": out.action, "stored": out.stored, **out.stats, "warnings": out.warnings},
+                         indent=2, default=str))
         return 0
     if args.cmd in ("score", "report", "export"):
         from sqlalchemy import text
