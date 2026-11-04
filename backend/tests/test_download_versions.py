@@ -17,6 +17,9 @@ from app.sources.common import download_checked, ensure_source, register_file, s
 from app.sources.sunbiz.client import BASE, RemoteFile, SunbizClient, needs_refresh
 from helpers import make_settings
 
+# Calls managed-file writers directly: explicit, temp-folder-only opt-out of the fail-closed file gate (B0).
+pytestmark = pytest.mark.usefixtures("unlocked_files")
+
 T1 = datetime(2026, 10, 27, 2, 30, tzinfo=timezone.utc)
 T2 = datetime(2026, 10, 27, 14, 35, tzinfo=timezone.utc)
 PATH = "/Public/doc/cor/20261026c.txt"

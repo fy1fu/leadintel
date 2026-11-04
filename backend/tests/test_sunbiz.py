@@ -20,6 +20,9 @@ from app.sources.sunbiz.parser import Parsed, Rejected, parse_bytes
 from helpers import make_settings
 from sunbiz_fixtures import cor, fic, record
 
+# Calls managed-file writers directly: explicit, temp-folder-only opt-out of the fail-closed file gate (B0).
+pytestmark = pytest.mark.usefixtures("unlocked_files")
+
 
 # ----------------------------------------------------------------------------- parser
 def test_valid_record_parses_with_dates_and_nul_padding_stripped():

@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 
+from app.db.locks import ensure_write_allowed
 from app.sources.common import sha256_file
 from app.sources.overture.reader import BBox, OvertureReader
 
@@ -50,7 +51,9 @@ def _covers(outer: list[float], inner: BBox) -> bool:
 class SnapshotStore:
     def __init__(self, root: Path):
         self.root = root / "overture"
-        self.root.mkdir(parents=True, exist_ok=True)
+        if not self.root.is_dir():
+            ensure_write_allowed(self.root)
+            self.root.mkdir(parents=True, exist_ok=True)
 
     def find(self, release: str, bbox: BBox) -> Snapshot | None:
         d = self.root / release
@@ -81,11 +84,13 @@ class SnapshotStore:
         if found:
             return found
         d = self.root / release
-        d.mkdir(parents=True, exist_ok=True)
         key = _bbox_key(bbox)
         data, tmp = d / f"places_{key}.parquet", d / f"places_{key}.parquet.part"
         table, stats = reader.read_bbox(bbox, columns=SNAPSHOT_COLUMNS, release=release)
+        ensure_write_allowed(tmp)
+        d.mkdir(parents=True, exist_ok=True)
         pq.write_table(table, tmp, compression="zstd")
+        ensure_write_allowed(data)
         os.replace(tmp, data)
         man = {
             "release": release, "bbox": [bbox.xmin, bbox.ymin, bbox.xmax, bbox.ymax], "file": data.name,
@@ -98,7 +103,9 @@ class SnapshotStore:
         }
         mpath = d / f"places_{key}.manifest.json"
         mtmp = mpath.with_suffix(".json.part")
+        ensure_write_allowed(mtmp)
         mtmp.write_text(json.dumps(man, indent=2))
+        ensure_write_allowed(mpath)
         os.replace(mtmp, mpath)
         return Snapshot(release, data, man, False)
 
@@ -110,6 +117,7 @@ class SnapshotStore:
         for name in releases[keep:]:
             if name in protected:
                 continue
+            ensure_write_allowed(self.root / name)
             shutil.rmtree(self.root / name)
             removed.append(name)
         return removed

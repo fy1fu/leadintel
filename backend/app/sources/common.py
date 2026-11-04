@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.db.locks import WRITE_CHECK_BYTES, ensure_write_allowed
 from app.db.models import Source, SourceFile, SourceRecord
 from app.net.http import InfraClient
 from app.net.mirrors import raise_for_retryable
@@ -66,6 +67,7 @@ def _read_json(path: Path) -> dict | None:
 
 
 def _write_json_atomic(path: Path, data: dict) -> None:
+    ensure_write_allowed(path)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(json.dumps(data, indent=1, sort_keys=True))
     os.replace(tmp, path)
@@ -172,7 +174,9 @@ def download_checked(client: InfraClient, url: str, dest: Path, *, expected_size
       remote identity, is never installed or imported unless its size is complete, and a failed
       refresh leaves the previous version and its metadata untouched.
     """
-    dest.parent.mkdir(parents=True, exist_ok=True)
+    if not dest.parent.is_dir():
+        ensure_write_allowed(dest.parent)
+        dest.parent.mkdir(parents=True, exist_ok=True)
     kw = {"auth": auth} if auth else {}
     if expected_size is None or remote_last_modified is None:
         head = client.head(url, **kw)
@@ -198,10 +202,12 @@ def download_checked(client: InfraClient, url: str, dest: Path, *, expected_size
     part = dest.with_name(dest.name + ".part")
     part_meta = part.with_name(part.name + ".meta.json")
     if part.exists() and _read_json(part_meta) != identity:  # leftover from a different remote version
+        ensure_write_allowed(part)
         part.unlink()
     _write_json_atomic(part_meta, identity)
     offset = part.stat().st_size if part.exists() else 0
     if expected_size is not None and offset > expected_size:
+        ensure_write_allowed(part)
         part.unlink()
         offset = 0
     headers = {"Range": f"bytes={offset}-"} if offset else {}
@@ -210,19 +216,29 @@ def download_checked(client: InfraClient, url: str, dest: Path, *, expected_size
             raise_for_retryable(resp, retry_404=False)
             if offset and resp.status_code != 206:
                 offset = 0
+            ensure_write_allowed(part)
+            since_check = 0
             with open(part, "ab" if offset else "wb") as fh:
                 for block in resp.iter_bytes(CHUNK):
+                    if since_check >= WRITE_CHECK_BYTES:  # stop a long download promptly if the lock is lost
+                        ensure_write_allowed(part)
+                        since_check = 0
                     fh.write(block)
+                    since_check += len(block)
     size = part.stat().st_size
     if expected_size is not None and size != expected_size:
         raise IOError(f"incomplete download of {url}: {size} of {expected_size} bytes (kept .part for resume)")
     digest = sha256_file(part)
     final = dest.with_name(f"{dest.stem}.{digest[:12]}{dest.suffix}")
+    ensure_write_allowed(final)
     if final.exists() and sha256_file(final) == digest:
         part.unlink()
     else:
+        # Intentional, pre-existing behaviour (kept in Phase B0): a content-addressed file whose content does
+        # not match its own name is corrupt, and is replaced by the verified download.
         os.replace(part, final)
     _write_json_atomic(meta_path, {"url": url, "size": size, "last_modified": lm, "sha256": digest, "path": final.name})
+    ensure_write_allowed(part_meta)
     part_meta.unlink(missing_ok=True)
     return Downloaded(final, digest, size, False, remote_last_modified)
 

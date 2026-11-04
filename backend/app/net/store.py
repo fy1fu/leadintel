@@ -8,6 +8,7 @@ from sqlalchemy import JSON, DateTime, Float, Integer, String, Text, create_engi
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
+from app.db.locks import exempt_engine
 from app.db.timeouts import pg_connect_args
 from app.net.probe import ProbeResult
 
@@ -54,7 +55,8 @@ class NetEventRow(Base):
 
 class NetStore:
     def __init__(self, url: str | None = None, engine: Engine | None = None, mode: str = "persistent"):
-        self.engine = engine or _make_engine(url or "sqlite://")
+        # The diagnostics store is independent of the business database and its maintenance lock (D9).
+        self.engine = exempt_engine(engine or _make_engine(url or "sqlite://"))
         self.mode = mode if (url or engine) else "memory"
         Base.metadata.create_all(self.engine)
 

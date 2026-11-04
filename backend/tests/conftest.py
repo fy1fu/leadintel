@@ -51,8 +51,12 @@ def pg_engine():
     cfg.set_main_option("sqlalchemy.url", TEST_DB_URL)
     engine = create_engine(TEST_DB_URL, future=True)
     from sqlalchemy import text
+    from app.db.locks import allow_unlocked_writes_for_tests
     from app.db.models import Base
     _refuse_non_test_database(engine)
+    # Explicit, isolated bypass of the fail-closed commit gate (Phase B0): only this engine, only a database
+    # whose name ends in _test, only inside pytest. Tests of the gate itself use their own engines.
+    allow_unlocked_writes_for_tests(engine)
     # Fresh schema each session (downgrade would refuse to drop file-version history). Drop only LeadIntel's
     # own tables - never the schema or the PostGIS / pg_trgm extensions: PostGIS can only be (re)created by a
     # superuser, and the documented setup (WINDOWS_SETUP.md) runs tests as a regular database user.
@@ -62,7 +66,9 @@ def pg_engine():
         drop = sorted(ours & existing)
         if drop:
             c.execute(text("DROP TABLE " + ", ".join(f'public."{t}"' for t in drop) + " CASCADE"))
-    command.upgrade(cfg, "head")
+    with engine.begin() as conn:  # migrate through the bypassed engine (migrations/env.py uses this connection)
+        cfg.attributes["connection"] = conn
+        command.upgrade(cfg, "head")
     yield engine
     engine.dispose()
 
@@ -76,3 +82,12 @@ def db(pg_engine):
     with pg_engine.begin() as c:
         c.execute(text(f"TRUNCATE {names} RESTART IDENTITY CASCADE"))
     return pg_engine
+
+
+@pytest.fixture
+def unlocked_files(tmp_path_factory):
+    """Explicit opt-in for tests that call managed-file writers directly (download_checked, snapshots, ...):
+    allows writes only below pytest's own temporary folder, never in a real data folder (Phase B0)."""
+    from app.db.locks import allow_unlocked_file_writes_for_tests
+    with allow_unlocked_file_writes_for_tests(tmp_path_factory.getbasetemp()):
+        yield

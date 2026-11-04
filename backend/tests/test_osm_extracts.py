@@ -11,6 +11,9 @@ from app.net.store import NetStore
 from app.sources.osm.extracts import GeofabrikExtracts, plan_osm_access
 from helpers import HTTPTestServer, make_settings, ok, registry, status, svc
 
+# Calls managed-file writers directly: explicit, temp-folder-only opt-out of the fail-closed file gate (B0).
+pytestmark = pytest.mark.usefixtures("unlocked_files")
+
 REGION = "north-america/us/testland"
 PBF = b"\x00\x00\x00\x0e\n\tOSMHeader" + bytes(range(256)) * 400
 MD5 = hashlib.md5(PBF).hexdigest()

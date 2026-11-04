@@ -9,6 +9,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
+from app.db import locks  # noqa: F401 - installs the fail-closed write gates (Phase B0)
 from app.db.timeouts import pg_connect_args
 
 

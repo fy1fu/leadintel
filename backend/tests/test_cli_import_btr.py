@@ -1,9 +1,11 @@
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
 import sqlalchemy.orm
 
 import app.config
+import app.db.locks
 import app.db.session
 import app.sources.btr.csv_import
 import app.sources.common
@@ -21,8 +23,16 @@ def test_import_btr_resolves_relative_csv_path_before_registration(monkeypatch, 
     mapping_path.write_text("business_name: business_name\n")
 
     monkeypatch.chdir(working)
-    monkeypatch.setattr(app.config, "get_settings", lambda: object())
+    monkeypatch.setattr(app.config, "get_settings", lambda: SimpleNamespace(data_dir=tmp_path / "data"))
     monkeypatch.setattr(app.db.session, "make_engine", lambda settings: object())
+    locks_taken = []
+
+    @contextmanager
+    def fake_lock(engine, operation, **kw):
+        locks_taken.append(operation)
+        yield None
+
+    monkeypatch.setattr(app.db.locks, "maintenance_lock", fake_lock)
 
     class FakeSession:
         def __init__(self, *args, **kwargs):
@@ -70,6 +80,7 @@ def test_import_btr_resolves_relative_csv_path_before_registration(monkeypatch, 
     ])
 
     assert result == 0
+    assert locks_taken == ["import-btr"]
     assert captured["kind"] == "btr_csv"
     assert captured["path"] == csv_path.resolve()
     assert Path(captured["path"]).is_absolute()

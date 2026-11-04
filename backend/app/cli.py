@@ -6,12 +6,27 @@ import json
 import sys
 from pathlib import Path
 
+from app.db.locks import EXIT_LOCK_HELD, EXIT_LOCK_LOST, LockLost, OperationInProgress
 from app.net.diagnostics import render_markdown, render_text
 from app.net.service import build_context
 
+EXIT_CODES_HELP = f"""exit codes (business commands):
+  0  success
+  2  invalid input (for example an unknown area key)
+  4  discovery finished with partial coverage
+  {EXIT_LOCK_HELD}  another LeadIntel operation holds the maintenance lock; nothing was changed
+  {EXIT_LOCK_LOST}  the maintenance lock was lost during the operation; it stopped before any further write"""
 
-def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="leadintel")
+# Every command is either reading or writing (Phase B0). Writing commands run under the shared maintenance
+# lock; tests/test_write_coverage.py fails if a command is added without being classified here.
+WRITING_COMMANDS = {("db", "upgrade"), ("config", "seed"), ("discover", None), ("score", None), ("import-btr", None)}
+READING_COMMANDS = {("net-check", None), ("db", "status"), ("config", "show"), ("config", "history"),
+                    ("report", None), ("export", None)}
+
+
+def build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(prog="leadintel", epilog=EXIT_CODES_HELP,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     nc = sub.add_parser("net-check", help="probe every registered external service with real requests")
     nc.add_argument("--only", help="comma-separated service keys")
@@ -44,9 +59,21 @@ def main(argv: list[str] | None = None) -> int:
     bt.add_argument("path", type=Path)
     bt.add_argument("--county", required=True, help="target area key, e.g. st_johns")
     bt.add_argument("--mapping", required=True, help="YAML file mapping fields to CSV column names")
-    args = ap.parse_args(argv)
+    return ap
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
     if args.cmd != "net-check":
-        return _business(args)
+        try:
+            return _business(args)
+        except OperationInProgress as exc:
+            print(f"leadintel: {exc}. Nothing was changed; try again when it has finished.", file=sys.stderr)
+            return EXIT_LOCK_HELD
+        except LockLost as exc:
+            print(f"leadintel: the maintenance lock was lost ({exc}); the operation stopped before any further "
+                  "write. Run it again.", file=sys.stderr)
+            return EXIT_LOCK_LOST
 
     ctx = build_context(persist=not args.no_store)
     if ctx.store.mode != "persistent":
@@ -74,7 +101,12 @@ def _business(args) -> int:
     from datetime import date
 
     from app.config import get_settings
+    from app.db.locks import maintenance_lock
     settings = get_settings()
+
+    def locked(engine, operation: str):
+        return maintenance_lock(engine, operation, data_dir=settings.data_dir)
+
     if args.cmd == "db":
         from pathlib import Path
 
@@ -83,7 +115,21 @@ def _business(args) -> int:
         cfg = Config(str(Path(__file__).parents[1] / "alembic.ini"))
         cfg.set_main_option("script_location", str(Path(__file__).parents[1] / "migrations"))
         cfg.set_main_option("sqlalchemy.url", settings.business_db_url)
-        command.upgrade(cfg, "head") if args.action == "upgrade" else command.current(cfg, verbose=True)
+        from app.db.session import make_engine
+        if args.action == "upgrade":
+            # Alembic uses its own engine to the same database; its commits pass the gate under this lock.
+            with locked(make_engine(settings), "db upgrade"):
+                command.upgrade(cfg, "head")
+        else:
+            # Reading only: Alembic would commit its (empty) transaction, which the fail-closed gate refuses
+            # without the lock. Inside an explicit transaction Alembic does not commit; LeadIntel rolls it back.
+            with make_engine(settings).connect() as conn:
+                trans = conn.begin()
+                try:
+                    cfg.attributes["connection"] = conn
+                    command.current(cfg, verbose=True)
+                finally:
+                    trans.rollback()
         return 0
     if args.cmd == "config":
         from sqlalchemy.orm import Session
@@ -93,7 +139,7 @@ def _business(args) -> int:
         svc = ConfigService(settings)
         engine = make_engine(settings)
         if args.action == "seed":
-            with Session(engine) as s:
+            with locked(engine, "config seed"), Session(engine) as s:
                 print("seeded:", svc.seed(s) or "nothing (already seeded)")
                 s.commit()
         elif args.action == "show":
@@ -124,7 +170,7 @@ def _business(args) -> int:
         from app.sources.common import Downloaded, ensure_source, register_file, sha256_file
         engine = make_engine(settings)
         mapping = yaml.safe_load(open(args.mapping, encoding="utf-8"))
-        with Session(engine) as s:
+        with locked(engine, "import-btr"), Session(engine) as s:
             fips = s.execute(text("SELECT spec->>'geoid' FROM area WHERE key=:k"), {"k": args.county}).scalar()
             if not fips:
                 print(f"unknown area {args.county}")
@@ -145,13 +191,16 @@ def _business(args) -> int:
         from app.appconfig.store import ConfigService
         from app.db.session import make_engine
         engine = make_engine(settings)
-        with Session(engine) as s:
-            fips = [r[0] for r in s.execute(text("SELECT spec->>'geoid' FROM area WHERE kind='county' AND is_target AND enabled"))]
-            if args.cmd == "score":
-                from app.scoring.runner import score_all
+        if args.cmd == "score":
+            from app.scoring.runner import score_all
+            with locked(engine, "score"), Session(engine) as s:
+                fips = [r[0] for r in s.execute(text("SELECT spec->>'geoid' FROM area WHERE kind='county' AND is_target AND enabled"))]
                 print(json.dumps(score_all(s, ConfigService(settings).effective(engine), fips), indent=2))
                 s.commit()
-            elif args.cmd == "report":
+            return 0
+        with Session(engine) as s:
+            fips = [r[0] for r in s.execute(text("SELECT spec->>'geoid' FROM area WHERE kind='county' AND is_target AND enabled"))]
+            if args.cmd == "report":
                 from app.reports.prospects import niche_comparison
                 print(json.dumps(niche_comparison(s, fips, args.niches.split(",") if args.niches else None), indent=2, default=str))
             else:

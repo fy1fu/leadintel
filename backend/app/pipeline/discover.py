@@ -23,6 +23,7 @@ from app.appconfig.store import ConfigService
 from app.config import Settings
 from app.costs.guard import CostGuard
 from app.db.models import Coverage, DiscoveryRun, SourceDateLedger, SourceFile
+from app.db.locks import LOCK_KEY, LockLost, OperationInProgress, maintenance_lock  # noqa: F401 - LOCK_KEY re-exported
 from app.db.session import check_database, make_engine
 from app.geo.areas import load_counties, target_areas
 from app.geo.geocode import CensusGeocoder, load_zip_counties
@@ -60,6 +61,19 @@ def run_discovery(settings: Settings, *, area_keys: list[str] | None = None, sin
                   overture: bool = True, client: InfraClient | None = None, engine=None) -> RunResult:
     engine = engine or make_engine(settings)
     check_database(engine)
+    try:
+        with maintenance_lock(engine, "discover", data_dir=settings.data_dir):
+            return _discover_locked(settings, engine, area_keys, since, until, overture_release, sunbiz, overture,
+                                    client)
+    except RunInProgress:
+        raise
+    except OperationInProgress as exc:
+        raise RunInProgress(str(exc)) from exc
+
+
+def _discover_locked(settings, engine, area_keys, since, until, overture_release, sunbiz, overture, client) -> RunResult:
+    # Everything here runs under the maintenance lock, including seeding the settings (before Phase B0 that
+    # commit happened before the lock was taken).
     cfgsvc = ConfigService(settings)
     with Session(engine) as s:
         cfgsvc.seed(s)
@@ -72,37 +86,34 @@ def run_discovery(settings: Settings, *, area_keys: list[str] | None = None, sin
     own_client = client is None
     client = client or InfraClient(reg, settings, guard, timeout=600)
     try:
-        return _run(settings, engine, cfg, reg, guard, client, area_keys, since, until, overture_release, sunbiz, overture)
+        return _run(settings, engine, cfg, reg, guard, client, area_keys, since, until, overture_release,
+                    sunbiz, overture)
     finally:
         if own_client:
             client.close()
 
 
-LOCK_KEY = 0x4C454144  # pg advisory lock: one discovery run at a time
-
-
-class RunInProgress(RuntimeError):
-    pass
+class RunInProgress(OperationInProgress):
+    """Another LeadIntel operation (a discovery run or any other writer) holds the maintenance lock."""
 
 
 def _run(settings, engine, cfg, reg, guard, client, area_keys, since, until, overture_release, sunbiz, overture) -> RunResult:
-    with engine.connect() as lock_conn:
-        if not lock_conn.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": LOCK_KEY}).scalar():
-            raise RunInProgress("another discovery run is in progress")
-        try:
-            with Session(engine) as s:  # we hold the lock, so any 'running' run is stale (process was killed)
-                s.execute(text("UPDATE discovery_run SET status='interrupted', finished_at=now() WHERE status='running'"))
-                s.commit()
-            try:
-                return _run_locked(settings, engine, cfg, reg, guard, client, area_keys, since, until, overture_release,
-                                   sunbiz, overture)
-            except Exception:
-                with Session(engine) as s:  # never leave a crashed run looking like it is still running
-                    s.execute(text("UPDATE discovery_run SET status='failed', finished_at=now() WHERE status='running'"))
-                    s.commit()
-                raise
-        finally:
-            lock_conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": LOCK_KEY})
+    # Called with the maintenance lock held (run_discovery), so any 'running' run is stale (process was killed).
+    with Session(engine) as s:
+        s.execute(text("UPDATE discovery_run SET status='interrupted', finished_at=now() WHERE status='running'"))
+        s.commit()
+    try:
+        return _run_locked(settings, engine, cfg, reg, guard, client, area_keys, since, until, overture_release,
+                           sunbiz, overture)
+    except LockLost:
+        # The lock may already belong to another operation: write nothing. The next run marks this run
+        # 'interrupted' (above).
+        raise
+    except Exception:
+        with Session(engine) as s:  # never leave a crashed run looking like it is still running
+            s.execute(text("UPDATE discovery_run SET status='failed', finished_at=now() WHERE status='running'"))
+            s.commit()
+        raise
 
 
 def _run_locked(settings, engine, cfg, reg, guard, client, area_keys, since, until, overture_release, sunbiz, overture) -> RunResult:

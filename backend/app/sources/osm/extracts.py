@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from app.db.locks import WRITE_CHECK_BYTES, ensure_write_allowed
 from app.net.http import InfraClient
 from app.net.mirrors import AllMirrorsFailed, MirrorSet, RetryableServiceError, raise_for_retryable
 from app.net.registry import Registry, Service
@@ -54,7 +55,9 @@ class GeofabrikExtracts:
         self.client = client
         self.store = store
         self.dir = data_dir / "osm"
-        self.dir.mkdir(parents=True, exist_ok=True)
+        if not self.dir.is_dir():
+            ensure_write_allowed(self.dir)
+            self.dir.mkdir(parents=True, exist_ok=True)
         self.enabled_extra = enabled_extra
 
     def _published_md5(self, svc: Service, region: str) -> str:
@@ -88,6 +91,7 @@ class GeofabrikExtracts:
         part = target.with_suffix(target.suffix + ".part")
         part_md5 = part.with_suffix(".expect")
         # A partial file is only resumable if it belongs to the same published version.
+        ensure_write_allowed(part)
         if part.exists() and (not part_md5.exists() or part_md5.read_text().strip() != want_md5):
             part.unlink()
         part_md5.write_text(want_md5)
@@ -100,10 +104,16 @@ class GeofabrikExtracts:
                 raise_for_retryable(resp)
                 if offset and resp.status_code != 206:
                     offset = 0  # server ignored Range - restart
+                since_check = 0
                 with open(part, "ab" if offset else "wb") as fh:
                     for block in resp.iter_bytes(CHUNK):
+                        if since_check >= WRITE_CHECK_BYTES:
+                            ensure_write_allowed(part)
+                            since_check = 0
                         fh.write(block)
+                        since_check += len(block)
         got = _md5_of(part)
+        ensure_write_allowed(target)
         if got != want_md5:
             part.unlink(missing_ok=True)
             part_md5.unlink(missing_ok=True)

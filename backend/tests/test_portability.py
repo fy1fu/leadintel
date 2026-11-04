@@ -20,6 +20,9 @@ from app.sources.common import (Downloaded, _cached_candidates, data_relative, e
 from app.sources.sunbiz.client import RemoteFile, SunbizClient
 from test_download_versions import PATH, REG, T1, T2, FakeSunbiz, env  # noqa: F401  (env is a fixture)
 
+# Calls managed-file writers directly: explicit, temp-folder-only opt-out of the fail-closed file gate (B0).
+pytestmark = pytest.mark.usefixtures("unlocked_files")
+
 
 def fetch(st, root, server, modified=None):
     rf = RemoteFile("cor", PATH, date(2026, 10, 26), len(server.content), modified or server.modified)
