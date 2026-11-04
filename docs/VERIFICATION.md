@@ -17,7 +17,6 @@ Status as of 2026-11-03 (updated during Phase 1). Items are closed only by a rea
 | V9 | Sunbiz HTTPS rate limits for bulk downloads | First full 30-day download on Windows (2026-11-03): 107 files fetched; 8 requests failed with a dropped connection (`incomplete chunked read`) or `401` under load; 6 succeeded on the retry, 2 failed twice and were recorded as gaps (coverage `partial`); the next run fetched them (`completed`). Quarterly download not yet observed. | Completeness (bulk download throughput) | No | Observe during the first quarterly download (resumable) |
 | V10 | Clay and St. Johns County BTR data access | Not yet checked; Duval's report portal is behind a bot challenge | **Completeness** (BTR evidence in St. Johns / Clay) | **No** (decided: generic manual-CSV import covers any county) | Check each county Tax Collector's published reports; public-records request where needed |
 | V11 | Review-count evidence from free sources | Overture has no review fields (verified). No permitted free bulk source identified. | **Completeness** (review evidence only by manual observation) | No (manual entry planned) | Manual research fields, or Google Places after the [ROADMAP.md §4](ROADMAP.md) checklist |
-
 | V12 | Windows run of the PR #1 test suite and live diagnostics | **Closed: passed on Windows 10 Home 22H2, 2026-11-03**, at commit `692f1db`. All 12 checks, the two Windows failures found and their fixes: [Windows validation](#windows-validation-v12-2026-11-03) | **Correctness** (platform-specific behaviour on Windows) | Before merging PR #1 | Procedure in PR #1 description |
 | V13 | DBPR licensee CSV column meanings (no published layout found); county-code map (all 67 codes, alphabetical from 11: Clay 20, Duval 26, St. Johns 65) | **Open: inferred, not officially verified.** Consistency check only: 99.21% of 626,509 rows agree with the Census ZIP->county relationship; the 0.79% disagreements are investigated in [DBPR_GEOGRAPHY.md](DBPR_GEOGRAPHY.md). On import, county/ZIP conflicts are excluded and never placed in a target county; code-only and ZIP-only assignments are flagged; every decision is stored with its raw values and reason (`code_map: inferred_v13`) | **Correctness** (licence evidence attribution) | No (evidence only; never creates prospects) | Find the official DBPR extract layout and code table, or ask DBPR |
 | V14 | One real Sunbiz corporate record with document number `11` (file 20261027c.txt, line 220) | **Open.** Quarantined, not guessed; still the only quarantine record after run 9 (2026-11-03) | Correctness (single record) | No | Re-check after the next quarterly file |
@@ -114,5 +113,61 @@ Run on a real Windows PC by the project owner, following [WINDOWS_SETUP.md](WIND
 Separately, `leadintel db status` prints a raw traceback for a wrong password, rather than the "business database unavailable" message described in §6.
 
 V13 and V14 remain **open**. The DBPR county-code map is consistent with Census ZIP data on both Linux and Windows, but it is **not officially verified**, and the V14 record is still quarantined.
+
+## Phase A portability verification on Windows, 2026-11-03
+
+Phase A (`95d5ceb`) lets downloaded source files keep working after the data folder is moved to another folder or computer. This section records its verification on the same Windows PC as the [Windows validation](#windows-validation-v12-2026-11-03). Results were taken from the PowerShell output provided by the project owner.
+
+### Environment
+
+| Item | Value |
+|---|---|
+| OS | Windows 10 Home 22H2 (build 19045), Windows PowerShell 5.1 |
+| Python | 3.13.17 |
+| PostgreSQL | 16 (EDB installer), PostGIS 3.4.2, pg_trgm 1.6 |
+| Code | `phase-1` at `95d5ceb2978e86eece90c61147ca2ab6245da2e5` |
+| Repository location | Inside a OneDrive-synced folder; sync paused during the test |
+
+### Automated tests
+
+| Check | Result |
+|---|---|
+| Portability regression tests (`tests/test_portability.py`) | **11 passed** (3.20 s) |
+| Full test suite on PostgreSQL / PostGIS | **248 passed, 5 skipped, 0 failed** (63.63 s). The 5 skipped are the opt-in live-network tests |
+
+### Real-data verification on copies
+
+Every operation that could change data ran only against copies: the real data folder, copied to `C:\leadintel-portability-test`, and the real database, restored into the separate database `leadintel_portability_check`. The originals were only read: to take baselines, to make the copies, and for the before/after integrity comparison.
+
+The checks used a dedicated script that is not part of the repository. It had two network guards:
+
+- **HTTPX transport:** the app's download check ran on an HTTPX client whose transport refused every request, including HEAD, GET and redirect hops.
+- **Python sockets:** inside the script's own Python process only, `socket.getaddrinfo`, `connect` and `connect_ex` refused any host other than localhost. This is not an operating-system-wide block. PostgreSQL's connection to the local copy database does not go through Python sockets.
+
+No HTTP request was attempted and no network attempt was refused in any check.
+
+Before any source-data file or sidecar under check was opened or hashed, the script resolved its path on disk, following links. The path had to lie inside the copy and outside the original; otherwise the check failed without opening the file.
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Starting state | Original data folder: 229 files, including 113 `.meta.json` sidecars and no partial downloads. 0 of the 238 items (229 files, 9 folders) were flagged by the offline, recall-on-open or recall-on-data-access attributes. Original database: 112 `source_file` rows, all stored as legacy absolute Windows paths into the original data folder (Sunbiz 109, DBPR 2, Census boundaries 1) |
+| 2 | Baselines | SHA-256 of every original file; row count and content fingerprint of all 30 tables, both extensions and the Alembic revision |
+| 3 | Copy, then move | Copy identical to the original (229 files: names, sizes, SHA-256); still identical after moving it to a different folder |
+| 4 | Database copy | `pg_dump -Fc` (95 MB) restored as the regular `leadintel` role; only the 3 expected restore errors (see [Windows-specific notes](#windows-specific-notes)). Copy fingerprint identical to the original's |
+| 5 | Stored paths resolve in the moved copy | **112 of 112** rows found in the moved copy with matching SHA-256; 0 failed, 0 exceptions |
+| 6 | Cache reuse from legacy sidecars | All 113 sidecars passed a validity preflight first. **113 of 113** files reused with no download; each sidecar was rewritten to the portable file-name form. **0 HTTP requests attempted**; 0 network attempts refused |
+| 7 | New registrations are relative | A new row was stored as `dbpr/CONSTRUCTIONLICENSE_1.78384f22878e.csv` and resolved inside the moved copy; rolled back (112 rows before and after) |
+| 8 | Stored paths after the sidecar rewrite | 112 of 112 rows still resolved; 0 failed, 0 exceptions |
+| 9 | Second move | Copy unchanged by the move (229 files); 116 data files identical to the original; 113 sidecar names unchanged. **113 of 113** file-name-only sidecars reused with **0 HTTP requests attempted**; 0 network attempts refused; 112 of 112 rows resolved |
+| 10 | Originals untouched | Original data folder (229 files: names, sizes, SHA-256) and original database fingerprint **identical** before and after the test |
+
+The copy folder and the copy database were kept for review.
+
+### Limitations and open items
+
+- Existing `source_file` rows keep their legacy absolute paths. Phase A maps them when they are looked up and does not rewrite them; only new registrations are stored relative to the data folder.
+- **Proposed follow-up, not implemented:** `resolve_local_path()` maps a legacy absolute path by its last component named `boundaries`, `dbpr`, `overture` or `sunbiz`, wherever that component appears in the path. If no mapped file exists, it falls back to the stored absolute path. Tightening the mapping to the exact known folder layouts is proposed for review.
+- **V13** (DBPR file layout and county-code map) remains **open**: not officially confirmed.
+- **V14** (Sunbiz document number `11`) remains **open**: still quarantined, pending the next quarterly file.
 
 The v0.3 requirements are consolidated in [ROADMAP.md](ROADMAP.md); the 2026-11-03 architecture review is in [REVIEW.md](REVIEW.md).
