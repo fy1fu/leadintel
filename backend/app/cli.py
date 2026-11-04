@@ -131,7 +131,7 @@ def _business(args) -> int:
                 return 2
             src = ensure_source(s, f"btr_{args.county}", {"name": f"{args.county} business tax receipts (manual CSV)",
                                                           "licence": "Public record", "reliability": {"btr": 0.85}})
-            p = args.path
+            p = args.path.resolve()
             sf = register_file(s, src, kind="btr_csv", remote_path=f"manual:{p.name}",
                                dl=Downloaded(p, sha256_file(p), p.stat().st_size, True))
             st = import_btr_csv(s, src, sf, p.read_bytes(), mapping, fips)
