@@ -166,8 +166,45 @@ The copy folder and the copy database were kept for review.
 ### Limitations and open items
 
 - Existing `source_file` rows keep their legacy absolute paths. Phase A maps them when they are looked up and does not rewrite them; only new registrations are stored relative to the data folder.
-- **Proposed follow-up, not implemented:** `resolve_local_path()` maps a legacy absolute path by its last component named `boundaries`, `dbpr`, `overture` or `sunbiz`, wherever that component appears in the path. If no mapped file exists, it falls back to the stored absolute path. Tightening the mapping to the exact known folder layouts is proposed for review.
+- **Follow-up, since implemented:** at `95d5ceb`, `resolve_local_path()` mapped a legacy absolute path by its last component named `boundaries`, `dbpr`, `overture` or `sunbiz`, wherever that component appeared in the path, and fell back to the stored absolute path if no mapped file existed. It now resolves by `source_file.kind` with exact folder layouts and no fallback: see [Source path resolution by kind](#source-path-resolution-by-kind-2026-11-03).
 - **V13** (DBPR file layout and county-code map) remains **open**: not officially confirmed.
 - **V14** (Sunbiz document number `11`) remains **open**: still quarantined, pending the next quarterly file.
+
+## Source path resolution by kind, 2026-11-03
+
+Two commits on `phase-1`, both tested on Linux and Windows:
+
+- **`b50ea12`** `fix: constrain source path resolution by kind`. `resolve_local_path()` now requires the row's `kind`:
+  - The six managed kinds map to explicit folders: `cor`, `fic`, `cor_event` and `fic_event` to `sunbiz/<kind>/`; `dbpr_licensees` to `dbpr/`; `boundary_county` to `boundaries/`.
+  - A relative entry must be exactly `<folder>/<file>`. A legacy absolute entry must end in `<folder>/<file>`, and the old data folder may have any name. The file is looked up only in the current data folder; a missing copy gives no result and never falls back to the stored absolute path.
+  - Any other kind (e.g. `btr_csv`) is an external file: only an existing file at an absolute stored path is accepted, never a path relative to the working directory.
+  - For managed kinds, only regular files inside the data folder are returned; links resolving outside it are rejected. External kinds are handled separately and must point to an existing file at an absolute path. A path starting with `/` is read as a POSIX path even if a name contains a backslash.
+  - The resolver locates the file but does not verify its contents. Consumers requiring integrity verification must compare the file's SHA-256 against the stored value.
+- **`56162bd`** `fix: store absolute paths for manual BTR imports`. `leadintel import-btr` stores the resolved absolute path of the CSV. Existing rows are not modified.
+
+### Test results
+
+| Run | Environment | Result |
+|---|---|---|
+| Full test suite (297 collected) | **Windows**: Python 3.13.17, PostgreSQL 16.15, PostGIS 3.4.2, pytest 9.2.0 | **290 passed, 7 skipped, 0 failed** (63.84 s) |
+| `tests/test_portability.py` and `tests/test_cli_import_btr.py` | Windows, as above | **53 passed, 2 skipped** (5.40 s) |
+| Full test suite (297 collected) | Linux build sandbox, test database only | **292 passed, 5 skipped, 0 failed** |
+
+Results for Windows were taken from the output provided by the project owner.
+
+**Not executed on Windows** (7 skipped):
+
+- **5 live-network tests:** they run only with `LEADINTEL_LIVE_TESTS=1`, which was intentionally not set.
+- **`test_posix_absolute_path_with_a_literal_backslash_is_parsed_as_posix`:** POSIX only, because a backslash cannot be part of a file name on Windows.
+- **`test_link_inside_the_data_folder_pointing_outside_is_rejected`:** skipped because creating a symbolic link was not available.
+
+Both platform-specific tests ran and passed on Linux; the second is therefore not verified on Windows.
+
+**Warning (non-failing):** `StarletteDeprecationWarning`, about using `httpx` with `starlette.testclient`; it recommends `httpx2`. Not changed.
+
+V13 and V14 remain **open**:
+
+- **V13:** the DBPR licence file layout and county-code map still need official verification.
+- **V14:** Sunbiz document number `11` remains quarantined, pending a recheck against the next quarterly file.
 
 The v0.3 requirements are consolidated in [ROADMAP.md](ROADMAP.md); the 2026-11-03 architecture review is in [REVIEW.md](REVIEW.md).
