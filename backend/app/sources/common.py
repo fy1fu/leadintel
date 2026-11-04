@@ -102,34 +102,55 @@ def data_relative(path: Path, data_dir: Path | None) -> str:
     return str(path)
 
 
-DATA_SUBDIRS = ("boundaries", "dbpr", "overture", "sunbiz")
+SOURCE_FILE_LAYOUTS = {             # source_file.kind -> folder inside the data folder
+    "cor": ("sunbiz", "cor"),
+    "fic": ("sunbiz", "fic"),
+    "cor_event": ("sunbiz", "cor_event"),
+    "fic_event": ("sunbiz", "fic_event"),
+    "dbpr_licensees": ("dbpr",),
+    "boundary_county": ("boundaries",),
+}
 
 
-def resolve_local_path(stored: str | None, data_dir: Path) -> Path | None:
-    """Find the file a source_file.local_path refers to in the current data folder.
+def resolve_local_path(stored: str | None, data_dir: Path, *, kind: str) -> Path | None:
+    """Find the file a source_file row refers to, or None. Pass the row's `kind`.
 
-    Relative entries resolve against `data_dir`. Older absolute entries (possibly from another computer
-    or operating system) are mapped by their position under a known data subfolder (dbpr/..., sunbiz/...),
-    falling back to the stored absolute path. Returns None when no candidate exists.
+    * Managed kinds (SOURCE_FILE_LAYOUTS) are looked up only inside `data_dir`, in their kind's folder:
+      - a relative entry must be exactly `<folder>/<file>`;
+      - an older absolute entry (possibly from another computer or operating system) must end in
+        `<folder>/<file>`; the file is then looked up in the current data folder. Whatever comes before
+        that (the old data folder, whatever its name) is ignored. A missing copy gives None: the stored
+        absolute path is never used, so a moved data folder never reads files from the folder it was
+        moved away from.
+    * Any other kind (e.g. `btr_csv`, a manually supplied file) is external: only an absolute stored path
+      is accepted, and only if it is an existing file. It is never mapped into `data_dir`, and a relative
+      entry is never interpreted against the current working directory.
+    Only regular files are returned, as resolved paths. This establishes where a file is, not what it
+    contains: callers must still compare its SHA-256 with the row's before using it.
     """
     if not stored:
         return None
-    win = "\\" in stored or (len(stored) > 1 and stored[1] == ":")
+    # A leading "/" is a POSIX absolute path, even if a name in it contains a literal backslash.
+    win = not stored.startswith("/") and ("\\" in stored or (len(stored) > 1 and stored[1] == ":"))
     pure = PureWindowsPath(stored) if win else PurePosixPath(stored)
-    candidates = []
-    if not pure.is_absolute():
-        candidates.append(Path(data_dir).joinpath(*pure.parts))
-    else:
-        parts = pure.parts
-        for i in range(len(parts) - 1, -1, -1):
-            if parts[i] in DATA_SUBDIRS:
-                candidates.append(Path(data_dir).joinpath(*parts[i:]))
-                break
-        candidates.append(Path(stored))
+    parts = pure.parts
+    layout = SOURCE_FILE_LAYOUTS.get(kind)
+    if layout is None:
+        if not pure.is_absolute() or ".." in parts:
+            return None
+        direct = Path(stored)
+        return direct.resolve() if direct.is_file() else None
+    if not parts or ".." in parts:
+        return None
+    tail = len(layout) + 1
+    if len(parts) < tail or (not pure.is_absolute() and len(parts) != tail):
+        return None
+    if tuple(parts[-tail:-1]) != layout:
+        return None
     root = Path(data_dir).resolve()
-    for c in candidates:
-        if c.exists() and (c.resolve().is_relative_to(root) or c == Path(stored)):
-            return c
+    resolved = root.joinpath(*layout, parts[-1]).resolve()
+    if resolved.is_file() and resolved.is_relative_to(root):  # also rejects links pointing out of the folder
+        return resolved
     return None
 
 
