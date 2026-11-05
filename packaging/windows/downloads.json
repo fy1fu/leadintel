@@ -1,0 +1,58 @@
+{
+  "_comment": "Components Setup downloads from their official sources. Every file is checked against its SHA-256 before use; Setup refuses any entry whose sha256 is empty. Verified 2026-11-05.",
+  "python": {
+    "version": "3.13.17",
+    "url": "https://www.python.org/ftp/python/3.13.17/python-3.13.17-amd64.zip",
+    "sha256": "b26ca4b4ee51e157836049934d2b8eabd55939be296f3130254251b6df96ec2f",
+    "size": 31162518
+  },
+  "postgresql": {
+    "version": "16.15-5",
+    "url": "https://get.enterprisedb.com/postgresql/postgresql-16.15-5-windows-x64-binaries.zip",
+    "sha256": "43bb45f173a6f08cf1d29a97a6d8deb119e8e8093a24c00d2d1001a0ccaa8281",
+    "size": 373254386,
+    "extract": [
+      "bin",
+      "lib",
+      "share"
+    ],
+    "skip": [
+      "bin/stackbuilder.exe",
+      "bin/wx"
+    ],
+    "_skip_note": "skip entries are path prefixes: StackBuilder and its wxWidgets libraries are not needed"
+  },
+  "postgis": {
+    "version": "3.6.2",
+    "url": "https://download.osgeo.org/postgis/windows/pg16/postgis-bundle-pg16-3.6.2x64.zip",
+    "sha256": "9f4e8a30d69ed7cc0088dd3d218ac65bd4e26aa5b7bffcb2ebd7dcb74a4ff2a6",
+    "size": 123957610,
+    "extract": [
+      "bin",
+      "lib",
+      "share",
+      "gdal-data"
+    ],
+    "skip": [
+      "bin/postgisgui/"
+    ]
+  },
+  "vc_runtime": {
+    "_comment": "PostgreSQL's programs need the Microsoft Visual C++ runtime (vcruntime140, vcruntime140_1, msvcp140), which its ZIP does not include. Instead of the system-wide installer (needs an administrator), Setup copies Microsoft-signed copies already downloaded above into PostgreSQL's own bin folder (app-local deployment): the vcruntime DLLs from the Python ZIP and msvcp140 from the pyarrow package (renamed there by delvewheel; content unchanged). Each copy must carry a valid Microsoft Authenticode signature.",
+    "files": [
+      {
+        "from": "python/vcruntime140.dll",
+        "to": "vcruntime140.dll"
+      },
+      {
+        "from": "python/vcruntime140_1.dll",
+        "to": "vcruntime140_1.dll"
+      },
+      {
+        "from": "venv/Lib/site-packages/pyarrow.libs/msvcp140-0fa7eb792d3fbcf2233e4ea47e9144b9.dll",
+        "to": "msvcp140.dll",
+        "sha256": "0fa7eb792d3fbcf2233e4ea47e9144b9b1309ba8ed5d4731a72fffa8f4f556d6"
+      }
+    ]
+  }
+}
