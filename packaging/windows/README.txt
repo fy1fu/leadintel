@@ -27,7 +27,8 @@ about 4 GB of free disk space. No administrator rights are needed.
    - In total it takes about 10-60+ minutes and downloads roughly 1 GB. Keep the window open.
    - If the data load is interrupted or fails, LeadIntel is still installed; nothing already loaded is lost.
      Run Load Data (section 3) or Setup.cmd again to finish it.
-3. When it says "Setup finished", you can delete the extracted folder if you like (keep the ZIP for reinstalls).
+3. When it says "Setup finished", press Enter to start LeadIntel (or close the window and start it later
+   from the Desktop). You can then delete the extracted folder if you like (keep the ZIP for reinstalls).
 
 
 2. START

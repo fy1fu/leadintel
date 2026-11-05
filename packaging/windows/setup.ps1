@@ -5,7 +5,7 @@
 # (encrypted with Windows DPAPI), the database schema and default settings, and Start-menu/Desktop shortcuts.
 # Re-running Setup from a newer package updates the program; the database (pgdata) and data folder are never
 # replaced or deleted, and the database is backed up before any schema upgrade.
-param([switch]$SunbizLogin, [switch]$NoShortcuts)
+param([switch]$SunbizLogin, [switch]$NoShortcuts, [switch]$NoStart)
 . (Join-Path $PSScriptRoot 'common.ps1')
 
 $Source = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))     # the package's app folder
@@ -332,6 +332,14 @@ try {
         Write-Host 'Prospects are loaded (some sources were incomplete; see above). Run Load Data any time to update or retry.'
     } else {
         Write-Host 'Prospects are loaded. Run Load Data (Start menu > LeadIntel) any time to update them.'
+    }
+    if (-not $NoStart) {
+        Write-Host ''
+        [void](Read-Host 'Press Enter to start LeadIntel now (or close this window to start it later from the Desktop)')
+        # Its own window: closing this Setup window then does not stop LeadIntel.
+        $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        Start-Process -FilePath $ps -WorkingDirectory $LI.Root -ArgumentList @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$(Join-Path $LI.App 'packaging\windows\launch.ps1')`"")
     }
     exit 0
 } catch {

@@ -105,6 +105,17 @@ for f in sorted(HERE.glob("*.ps1")):
 for f in sorted(HERE.glob("*.ps1")):
     check(f"{f.name}: no Measure-Object (empty input breaks it under strict mode)", not any("Measure-Object" in ln for ln in f.read_text().splitlines() if not ln.lstrip().startswith("#")))
 
+# ---- end of Setup: offer to start LeadIntel ----
+setup_cmd = (HERE / "root" / "Setup.cmd").read_text()
+tail = setup[setup.rindex("Invoke-InitialLoad $state"):setup.index("} catch {", setup.rindex("Invoke-InitialLoad $state"))]
+check("setup: on success asks 'Press Enter to start LeadIntel' and opens launch.ps1 in its own window",
+      "Press Enter to start LeadIntel now" in tail and "launch.ps1" in tail and "Start-Process" in tail
+      and tail.index("Press Enter to start LeadIntel now") < tail.rindex("exit 0"))
+check("setup: -NoStart skips starting LeadIntel", "[switch]$NoStart" in setup and "if (-not $NoStart)" in tail)
+check("Setup.cmd pauses only when Setup failed (errors stay readable)",
+      re.search(r"if errorlevel 1 \(\s*echo\.\s*pause\s*\)", setup_cmd) is not None
+      and not re.search(r"(?m)^pause\s*$", setup_cmd))
+
 # ---- automatic initial data load (Friend Edition 1.0.0) ----
 common = (HERE / "common.ps1").read_text()
 load = (HERE / "load-data.ps1").read_text()
