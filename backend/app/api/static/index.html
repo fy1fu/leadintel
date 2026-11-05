@@ -55,10 +55,21 @@ table{border-collapse:collapse;width:100%;font-size:12.5px} td,th{text-align:lef
 const $ = s => document.querySelector(s);
 const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-let items = [], selected = null;
-const map = new maplibregl.Map({container: "map", style: "https://tiles.openfreemap.org/styles/liberty",
-  center: [-81.6, 30.2], zoom: 9, attributionControl: {compact: true}});
-map.addControl(new maplibregl.NavigationControl());
+let items = [], selected = null, noRun = false, map = null, mapReady = false, lastFc = null;
+// The map needs an internet connection (library and tiles); the list and records work without it.
+try {
+  map = new maplibregl.Map({container: "map", style: "https://tiles.openfreemap.org/styles/liberty",
+    center: [-81.6, 30.2], zoom: 9, attributionControl: {compact: true}});
+  map.addControl(new maplibregl.NavigationControl());
+  map.on("load", () => { mapReady = true; if (lastFc) setMapData(lastFc); });
+} catch (e) {
+  map = null;
+  $("#map").innerHTML = '<p class="sub" style="padding:14px">Map unavailable (it needs an internet connection). The list and business records still work.</p>';
+}
+function setMapData(fc) {
+  if (!map || !mapReady) return;
+  if (map.getSource("p")) map.getSource("p").setData(fc); else addLayers(fc);
+}
 
 async function api(path) {
   const r = await fetch(path);
@@ -69,7 +80,11 @@ async function api(path) {
 async function loadCoverage() {
   try {
     const c = await api("/api/coverage/latest");
-    if (!c.run) { $("#coverage").textContent = "No discovery run yet."; return; }
+    if (!c.run) {
+      noRun = true;
+      $("#coverage").innerHTML = "<strong>No prospect data yet.</strong> Run <strong>Load Data</strong> (Start menu &rsaquo; LeadIntel &rsaquo; Load Data) to download public business data for the target counties, then refresh this page.";
+      return;
+    }
     const bad = c.coverage.filter(x => x.state !== "complete");
     $("#coverage").innerHTML = `Run #${c.run.id} (${esc(c.run.status)}) · ` + (bad.length
       ? `<strong>Coverage incomplete:</strong> ` + bad.map(x => `${esc(x.source)}/${esc(x.area)}: ${esc(x.state)}`).join(", ")
@@ -87,7 +102,7 @@ async function load() {
     renderList();
     const fc = {type: "FeatureCollection", features: items.filter(i => i.lon != null).map(i => ({type: "Feature",
       geometry: {type: "Point", coordinates: [i.lon, i.lat]}, properties: {id: i.id, q: i.qualification || "none"}}))};
-    if (map.getSource("p")) map.getSource("p").setData(fc); else addLayers(fc);
+    lastFc = fc; setMapData(fc);
   } catch (e) { $("#list").innerHTML = `<p class="sub" style="padding:14px">${esc(e.message)}</p>`; }
 }
 
@@ -112,7 +127,9 @@ function renderList() {
     <div class="sub">${esc(i.industry)} · ${esc(i.county)} · LPS ${i.lps ?? "–"} · BOS ${i.bos ?? "–"} · evidence ${i.evidence_points ?? "–"}</div>
     <span class="pill q-${esc(i.qualification)}">${esc((i.qualification || "unscored").replaceAll("_", " "))}</span>
     ${i.website_listed ? '<span class="pill">website listed</span>' : '<span class="pill">no website listed</span>'}
-    ${i.has_phone ? '<span class="pill">phone</span>' : ""}</div>`).join("") || '<p class="sub" style="padding:14px">No prospects match.</p>';
+    ${i.has_phone ? '<span class="pill">phone</span>' : ""}</div>`).join("") || (noRun
+      ? '<p class="sub" style="padding:14px"><strong>No prospect data yet.</strong><br>Run <strong>Load Data</strong> from the Start menu (LeadIntel folder), then refresh this page.</p>'
+      : '<p class="sub" style="padding:14px">No prospects match these filters.</p>');
   for (const el of document.querySelectorAll("#list .item")) {
     el.onclick = () => select(+el.dataset.id, true);
     el.onkeydown = e => { if (e.key === "Enter") select(+el.dataset.id, true); };
@@ -122,7 +139,7 @@ function renderList() {
 async function select(id, fly) {
   selected = id; renderList();
   const it = items.find(i => i.id === id);
-  if (fly && it && it.lon != null) map.flyTo({center: [it.lon, it.lat], zoom: 15});
+  if (fly && map && it && it.lon != null) map.flyTo({center: [it.lon, it.lat], zoom: 15});
   const el = document.querySelector(`#list .item[data-id="${id}"]`); if (el && !fly) el.scrollIntoView({block: "nearest"});
   try { renderProfile(await api(`/api/prospects/${id}`)); } catch (e) { $("#profile").textContent = e.message; }
 }
@@ -154,7 +171,7 @@ function renderProfile(p) {
 
 let t; for (const id of ["#county","#niche","#qual"]) $(id).onchange = load;
 $("#q").oninput = () => { clearTimeout(t); t = setTimeout(load, 300); };
-map.on("load", load); loadCoverage();
+loadCoverage().finally(load);
 </script>
 </body>
 </html>
