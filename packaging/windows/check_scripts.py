@@ -85,7 +85,7 @@ check("setup: database passwords are never regenerated for an existing database"
       init.index("New-RandomSecret") < init.index("} elseif (-not (Test-Secret 'db_super')"))
 check("setup: database is backed up before upgrading an existing installation", re.search(r"pg_dump.*-Fc", init, re.S) is not None)
 check("setup: removals only target program folders and the downloads cache",
-      all(re.search(r"\$new|\$prev|\$old|\$stage|\$LI\.Python|\$LI\.Venv|\$part|\$pwFile|\$LI\.Downloads|Remove-Item Env:", ln)
+      all(re.search(r"\$new|\$prev|\$old|\$stage|\$LI\.Python|\$LI\.Venv|\$part|\$pwFile|\$LI\.Downloads|Remove-Item Env:|'sunbiz_user\.dpapi'\), \(Join-Path \$LI\.Secrets 'sunbiz_password\.dpapi'", ln)
           for ln in setup.splitlines() if "Remove-Item" in ln))
 
 # Under Set-StrictMode, a function that returns an empty list returns $null, and $null.Count throws
@@ -115,6 +115,28 @@ check("setup: -NoStart skips starting LeadIntel", "[switch]$NoStart" in setup an
 check("Setup.cmd pauses only when Setup failed (errors stay readable)",
       re.search(r"if errorlevel 1 \(\s*echo\.\s*pause\s*\)", setup_cmd) is not None
       and not re.search(r"(?m)^pause\s*$", setup_cmd))
+
+# ---- built-in Sunbiz public login, plain-language status, automatic background refresh ----
+launch2 = (HERE / "launch.ps1").read_text()
+load2 = (HERE / "load-data.ps1").read_text()
+common2 = (HERE / "common.ps1").read_text()
+import json as _json
+pub = _json.loads((HERE / "sunbiz-public-login.json").read_text())
+check("built-in Sunbiz login file names the official source page and host",
+      pub.get("source_page", "").startswith("https://dos.fl.gov/") and pub.get("host") == "sftp.floridados.gov" and pub.get("user"))
+check("Set-AppEnvironment takes the Sunbiz login from Get-SunbizLogin (saved login first, then built-in)",
+      "$login = Get-SunbizLogin" in block_after(common2, r"function Set-AppEnvironment\(")
+      and block_after(common2, r"function Get-SunbizLogin ").index("Get-Secret 'sunbiz_user'")
+      < block_after(common2, r"function Get-SunbizLogin ").index("Join-Path $LIScriptDir 'sunbiz-public-login.json'"))
+check("setup asks for a Sunbiz login only with -SunbizLogin", "if (-not $SunbizLogin) { return }" in block_after(setup, r"function Request-Sunbiz\("))
+check("no script ever deletes the database passwords (db_super / db_app)",
+      not any(re.search(r"Remove-Item.*db_(super|app)", ln) for f in HERE.glob("*.ps1") for ln in f.read_text().splitlines()))
+check("launcher starts a background update only when one is due and no load is already running",
+      "$why = Get-DataRefreshReason $state (Get-Date)" in launch2 and "if ($why -and -not $loading)" in launch2
+      and "-WindowStyle Minimized" in launch2 and "'-Auto'" in launch2)
+check("background update starts only after the server answered (inside the normal launch path)",
+      launch2.index("$secondLaunch = $true") < launch2.index("Get-DataRefreshReason") and launch2.index("$ready = $true") < launch2.index("Get-DataRefreshReason"))
+check("Load Data -Auto never waits for a key", "if ($Auto) {" in load2 and re.search(r"else \{ Write-Host 'Press Enter to close.'; \[void\]\(Read-Host\) \}", load2))
 
 # ---- automatic initial data load (Friend Edition 1.0.0) ----
 common = (HERE / "common.ps1").read_text()

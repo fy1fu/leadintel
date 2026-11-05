@@ -27,14 +27,15 @@ APP_FILES = ("backend/alembic.ini", "backend/pyproject.toml")
 EXCLUDE = re.compile(r"(^|/)(__pycache__|\.venv|venv|tests?|docs|data|backups?)(/|$)|\.(pyc|db|sqlite3?|dump|bak|env|pem|key|bundle|patch)$",
                      re.IGNORECASE)
 SCRIPTS = ("common.ps1", "setup.ps1", "launch.ps1", "stop.ps1", "load-data.ps1", "export.ps1", "run_cli.py",
-           "downloads.json", "requirements-win-py313.lock")
+           "downloads.json", "requirements-win-py313.lock",
+           "sunbiz-public-login.json")  # Florida's publicly published Sunbiz login (owner decision 2026-11-05)
 DEV_SCRIPTS = ("test-dataload.ps1",)
 ROOT_FILES = ("Setup.cmd", "LeadIntel.cmd", "Stop LeadIntel.cmd", "Load Data.cmd", "Export Prospects.cmd")
 CRLF = (".ps1", ".cmd", ".txt")
 SECRET_PATTERNS = [
     re.compile(rb"postgres(?:ql)?(?:\+\w+)?://[^/\s:@]+:[^@\s/]+@"),          # URL with an embedded password
     re.compile(rb"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
-    re.compile(rb"(?i)\b(PGPASSWORD|SUNBIZ_SFTP_PASSWORD)\s*=\s*['\"]?[A-Za-z0-9!@#$%^&*]{6,}"),
+    re.compile(rb"(?i)\b(PGPASSWORD|SUNBIZ_SFTP_PASSWORD)\s*=\s*['\"]?(?!\$)[A-Za-z0-9!@#%^&*]{6,}"),  # $... = a variable
     re.compile(rb"(?i)password\s*[:=]\s*['\"][^'\"$\s{}]{6,}['\"]"),
 ]
 SECRET_ALLOW = {  # reviewed matches that are not secrets (placeholders/test strings in code)

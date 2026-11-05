@@ -210,21 +210,21 @@ WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '$PgDatabase')\gexec
 }
 
 function Request-Sunbiz([hashtable]$state) {
-    $have = (Test-Secret 'sunbiz_user') -and (Test-Secret 'sunbiz_password')
-    if ($have -and -not $SunbizLogin) { return }
-    if (-not $SunbizLogin -and (Get-StateValue $state 'sunbiz_prompted' $false)) { return }
-    Write-Step 'Optional: Florida Sunbiz data login'
-    Write-Note 'Florida''s Division of Corporations publishes a public login for its bulk data download site.'
-    Write-Note 'LeadIntel uses it to find newly registered businesses. You can skip this and add it later'
-    Write-Note 'by running Setup.cmd again with the Sunbiz option (see README).'
-    $u = Read-Host '   Sunbiz login name (press Enter to skip)' -AsSecureString
-    if ($u.Length -eq 0) { Write-Note 'Skipped. LeadIntel works without it; Sunbiz data is just not downloaded.' }
-    else {
+    # LeadIntel uses Florida's publicly published Sunbiz login automatically (sunbiz-public-login.json), so Setup
+    # asks nothing. Only 'setup.ps1 -SunbizLogin' asks, to save a different login (e.g. if Florida changes it).
+    if (-not $SunbizLogin) { return }
+    Write-Step 'Sunbiz login (override)'
+    Write-Note 'LeadIntel normally uses the public login Florida publishes on its Data Downloads page.'
+    Write-Note 'Enter a different login only if that one stopped working. Press Enter to keep the built-in one.'
+    $u = Read-Host '   Sunbiz login name (press Enter to keep the built-in login)' -AsSecureString
+    if ($u.Length -eq 0) {
+        Remove-Item -LiteralPath (Join-Path $LI.Secrets 'sunbiz_user.dpapi'), (Join-Path $LI.Secrets 'sunbiz_password.dpapi') -ErrorAction SilentlyContinue
+        Write-Note 'Using the built-in public login.'
+    } else {
         $p = Read-Host '   Sunbiz password' -AsSecureString
-        if ($p.Length -eq 0) { Write-Note 'No password entered; skipped.' }
+        if ($p.Length -eq 0) { Write-Note 'No password entered; nothing changed.' }
         else { Save-Secret 'sunbiz_user' $u; Save-Secret 'sunbiz_password' $p; Write-Note 'Saved, encrypted for your Windows account.' }
     }
-    $state['sunbiz_prompted'] = $true
 }
 
 function Invoke-InitialLoad([hashtable]$state) {

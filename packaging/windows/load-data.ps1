@@ -2,6 +2,8 @@
 # Runs LeadIntel's existing `discover` command (downloads, imports, duplicate matching and scoring) with progress.
 # Safe to run any time and repeatedly: a second load at the same time exits without changing anything; an
 # interrupted or failed load keeps everything loaded before. LeadIntel can stay open; refresh the page afterwards.
+# -Auto: started by the launcher in a minimized window to retry or refresh; closes itself when done.
+param([switch]$Auto)
 . (Join-Path $PSScriptRoot 'common.ps1')
 $exit = 1
 try {
@@ -10,8 +12,8 @@ try {
     Write-Host 'Downloads public data (business listings, state registrations and licences, county boundaries) for the'
     Write-Host 'target counties, then matches and scores the prospects. A first load can take 10-60+ minutes and download'
     Write-Host 'several hundred MB; later updates reuse unchanged files and are usually much faster.'
-    if (-not ((Test-Secret 'sunbiz_user') -and (Test-Secret 'sunbiz_password'))) {
-        Write-Host 'Note: no Sunbiz login saved, so new Sunbiz registrations are skipped (see README).' -ForegroundColor Yellow
+    if (-not (Get-SunbizLogin)) {
+        Write-Host 'Note: no Sunbiz login available, so new Sunbiz registrations are skipped (see README).' -ForegroundColor Yellow
     }
     Start-Pg | Out-Null
     Write-Step 'Loading data'
@@ -31,5 +33,6 @@ try {
     Clear-AppEnvironment
     try { Stop-PgIfIdle } catch { }
 }
-Write-Host 'Press Enter to close.'; [void](Read-Host)
+if ($Auto) { Write-Host 'This window closes by itself in 30 seconds.'; Start-Sleep -Seconds 30 }
+else { Write-Host 'Press Enter to close.'; [void](Read-Host) }
 exit $exit

@@ -13,6 +13,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 Set-StrictMode -Version 2
 
+$LIScriptDir = $PSScriptRoot      # folder of these scripts (captured once; used for files shipped next to them)
 $LIRoot = Join-Path $env:LOCALAPPDATA 'LeadIntel'
 $LI = @{
     Root      = $LIRoot
@@ -216,9 +217,21 @@ function Set-AppEnvironment([hashtable]$state, [switch]$ReadOnly) {
     $env:PYTHONDONTWRITEBYTECODE = '1'
     $env:PYTHONUTF8 = '1'
     if ($ReadOnly) { $env:PGOPTIONS = '-c default_transaction_read_only=on' } else { Remove-Item Env:PGOPTIONS -ErrorAction SilentlyContinue }
+    $login = Get-SunbizLogin
+    if ($login) { $env:SUNBIZ_SFTP_USER = $login.User; $env:SUNBIZ_SFTP_PASSWORD = $login.Password }
+}
+function Get-SunbizLogin {
+    # A login saved with 'setup.ps1 -SunbizLogin' (DPAPI) wins; otherwise the public login that Florida publishes on
+    # its Data Downloads page, shipped in sunbiz-public-login.json. Returns $null only if neither is available.
     $u = Get-Secret 'sunbiz_user'
     $p = Get-Secret 'sunbiz_password'
-    if ($u -and $p) { $env:SUNBIZ_SFTP_USER = $u; $env:SUNBIZ_SFTP_PASSWORD = $p }
+    if ($u -and $p) { return @{ User = $u; Password = $p; Source = 'saved' } }
+    $f = Join-Path $LIScriptDir 'sunbiz-public-login.json'
+    if (Test-Path $f) {
+        $j = Get-Content -Raw -LiteralPath $f | ConvertFrom-Json
+        if ($j.user -and $j.password) { return @{ User = "$($j.user)"; Password = "$($j.password)"; Source = 'built-in public login' } }
+    }
+    return $null
 }
 function Clear-AppEnvironment {
     foreach ($n in 'PGPASSWORD', 'PGOPTIONS', 'SUNBIZ_SFTP_USER', 'SUNBIZ_SFTP_PASSWORD', 'LEADINTEL_DATABASE_URL') {
@@ -385,4 +398,25 @@ function Update-LoadState([hashtable]$state, [string]$outcome) {
     if ($outcome -eq 'complete') { $state['initial_load'] = 'complete' }
     elseif ($outcome -eq 'warnings') { if ($prev -ne 'complete') { $state['initial_load'] = 'complete_with_warnings' } }
     elseif ($prev -ne 'complete' -and $prev -ne 'complete_with_warnings') { $state['initial_load'] = 'failed' }
+}
+
+function Get-DataRefreshReason([hashtable]$state, [datetime]$now) {
+    # Pure function (tested): why the launcher should start Load Data in the background, or $null.
+    #   - the first load never succeeded (failed or interrupted)       -> retry if the last attempt is >= 3 hours old
+    #   - the last load was incomplete or failed                        -> retry if it is >= 3 hours old
+    #   - the data is a week old                                        -> refresh
+    $initial = Get-StateValue $state 'initial_load'
+    $outcome = Get-StateValue $state 'last_load_outcome'
+    $at = Get-StateValue $state 'last_load_at'
+    $last = $null
+    if ($at -is [datetime]) { $last = $at }
+    elseif ($at) { try { $last = [datetime]::Parse("$at", [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind) } catch { } }
+    $age = if ($last) { $now - $last } else { $null }
+    if (-not $initial -or $initial -eq 'failed') {
+        if (-not $age -or $age.TotalHours -ge 3) { return 'the first data load has not finished yet' }
+        return $null
+    }
+    if ($outcome -and $outcome -ne 'complete' -and $age -and $age.TotalHours -ge 3) { return 'the last update was incomplete' }
+    if (-not $age -or $age.TotalDays -ge 7) { return 'the data is more than a week old' }
+    return $null
 }

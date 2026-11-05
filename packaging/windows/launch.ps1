@@ -45,6 +45,16 @@ try {
     Write-Host "`nLeadIntel is running at $url" -ForegroundColor Green
     Write-Host 'Keep this window open while you use LeadIntel. Press Ctrl+C here to stop LeadIntel and its database.'
     Start-Process $url
+    # Retry an incomplete load, or refresh week-old data, without the salesperson having to do anything. Runs in its
+    # own minimized window; the database lock makes a second load at the same time impossible.
+    $why = Get-DataRefreshReason $state (Get-Date)
+    $loading = @(Get-LeadIntelProcesses | Where-Object { $_.CommandLine -notmatch 'uvicorn' }).Count -gt 0
+    if ($why -and -not $loading) {
+        Write-Host "Updating the data in the background ($why). Refresh the page when it has finished." -ForegroundColor Cyan
+        $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        Start-Process -FilePath $ps -WindowStyle Minimized -WorkingDirectory $LI.Root -ArgumentList @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$(Join-Path $LI.App 'packaging\windows\load-data.ps1')`"", '-Auto')
+    }
     $server.WaitForExit()
 } catch {
     if ($_.Exception.Message -notlike 'LeadIntel:*') { Write-Host "`nLeadIntel stopped: $($_.Exception.Message)" -ForegroundColor Red }

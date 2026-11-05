@@ -42,6 +42,33 @@ Update-LoadState $s 'failed';   Assert 'state: later failure keeps complete_with
 Update-LoadState $s 'complete'; Assert 'state: success -> complete' ($s['initial_load'] -eq 'complete')
 Update-LoadState $s 'failed';   Assert 'state: later failure keeps complete' ($s['initial_load'] -eq 'complete' -and $s['last_load_outcome'] -eq 'failed')
 
+# ---- automatic background refresh rules (launcher) ----
+$now = Get-Date
+function St([string]$initial, [string]$outcome, $hoursAgo) {
+    $h = @{}
+    if ($initial) { $h['initial_load'] = $initial }
+    if ($outcome) { $h['last_load_outcome'] = $outcome }
+    if ($null -ne $hoursAgo) { $h['last_load_at'] = $now.AddHours(-$hoursAgo).ToString('o') }
+    return $h
+}
+Assert 'refresh: never loaded -> load' ($null -ne (Get-DataRefreshReason (St '' '' $null) $now))
+Assert 'refresh: first load failed 1h ago -> wait' ($null -eq (Get-DataRefreshReason (St 'failed' 'failed' 1) $now))
+Assert 'refresh: first load failed 4h ago -> retry' ((Get-DataRefreshReason (St 'failed' 'failed' 4) $now) -like '*first data load*')
+Assert 'refresh: incomplete 1h ago -> wait' ($null -eq (Get-DataRefreshReason (St 'complete_with_warnings' 'warnings' 1) $now))
+Assert 'refresh: incomplete 4h ago -> retry' ((Get-DataRefreshReason (St 'complete_with_warnings' 'warnings' 4) $now) -like '*incomplete*')
+Assert 'refresh: later failure 5h ago after a full load -> retry' ((Get-DataRefreshReason (St 'complete' 'failed' 5) $now) -like '*incomplete*')
+Assert 'refresh: complete 2 days ago -> nothing' ($null -eq (Get-DataRefreshReason (St 'complete' 'complete' 48) $now))
+Assert 'refresh: complete 8 days ago -> weekly refresh' ((Get-DataRefreshReason (St 'complete' 'complete' 192) $now) -like '*week old*')
+$dt = St 'complete' 'complete' $null; $dt['last_load_at'] = $now.AddDays(-8)
+Assert 'refresh: a date already parsed by ConvertFrom-Json also works' ((Get-DataRefreshReason $dt $now) -like '*week old*')
+
+# ---- Sunbiz login: built-in public login unless one was saved ----
+$login = Get-SunbizLogin
+Assert 'sunbiz: built-in public login is used when none is saved' ($login -and $login.User -eq 'Public' -and $login.Source -eq 'built-in public login')
+Save-PlainSecret 'sunbiz_user' 'OtherUser'; Save-PlainSecret 'sunbiz_password' 'OtherPass'
+$login = Get-SunbizLogin
+Assert 'sunbiz: a saved login overrides the built-in one' ($login.User -eq 'OtherUser' -and $login.Source -eq 'saved')
+
 # ---- simulated discover runs through the real Invoke-DataLoad / Show-DataLoadResult ----
 $hostExe = (Get-Process -Id $PID).Path
 $partialJson = '{"run_id": 2, "status": "partial", "counts": {}, "coverage": [' +

@@ -21,7 +21,6 @@ about 4 GB of free disk space. No administrator rights are needed.
          %LOCALAPPDATA%\LeadIntel
    - It creates a private database with passwords generated just for this computer. They are encrypted
      for your Windows account; you never need to know or type them.
-   - It asks (optionally) for the Florida Sunbiz public data login. Press Enter to skip.
    - Finally it loads public business data for the target counties into your database, so LeadIntel
      opens with prospects. Progress (current step, elapsed time, MB downloaded) is shown in the window.
    - In total it takes about 10-60+ minutes and downloads roughly 1 GB. Keep the window open.
@@ -48,6 +47,8 @@ refresh the browser page when it finishes.
 - Safe to run any time: if a load is already running, a second one stops without changing anything.
 - If a load is interrupted or a source fails, everything loaded before is kept; just run Load Data again.
 - If some sources were incomplete, the window lists them; the rest is saved.
+- You normally do not need to run it yourself: when you start LeadIntel, it updates the data in the
+  background if the last update was incomplete (after 3 hours) or the data is a week old.
 
 
 4. USE
@@ -83,10 +84,12 @@ Setup replaces only the program. Your database, downloaded data and settings are
 is backed up to %LOCALAPPDATA%\LeadIntel\backups before any change to its structure.
 
 
-8. SUNBIZ LOGIN (optional)
---------------------------
-Florida's Division of Corporations publishes a public login for its bulk data site. LeadIntel uses it to
-find newly registered businesses. To add or change it later, open PowerShell and run:
+8. SUNBIZ LOGIN
+---------------
+LeadIntel downloads newly registered Florida businesses from Sunbiz using the public login that Florida's
+Division of Corporations publishes on its Data Downloads page. It is built in; you never need to enter it.
+Only if Florida changes that login, enter the new one (from the Data Downloads page) by opening PowerShell and
+running:
     powershell -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\LeadIntel\app\packaging\windows\setup.ps1" -SunbizLogin
 
 
