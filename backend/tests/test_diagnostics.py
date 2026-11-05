@@ -62,12 +62,13 @@ def test_diagnostics_fallback_criticality_and_reports(tmp_path):
         assert sv["optional_off"]["status"] == "disabled" and sv["optional_off"]["probes"] == []
         assert "operational_via_fallback" in render_text(rep) and "| files |" in render_markdown(rep)
 
-        app = create_app(NetContext(s, reg, store, g, d))
-        c = TestClient(app)
+        app = create_app(NetContext(s, reg, store, g, d), token="test-token")
+        c = TestClient(app, base_url="http://127.0.0.1:8765")
         assert c.get("/api/network/diagnostics").json()["latest_run_id"] == rep["latest_run_id"]
         page = c.get("/diagnostics/network").text
         assert "Network diagnostics" in page and "primary" in page and "required capability unavailable" in page
-        rerun = c.post("/api/network/diagnostics/run", params={"only": ["mirror"]}).json()
+        rerun = c.post("/api/network/diagnostics/run", params={"only": ["mirror"]},
+                       headers={"X-LeadIntel-Token": "test-token", "Origin": "http://127.0.0.1:8765"}).json()
         assert rerun["run_id"] != rep["latest_run_id"]
     finally:
         for x in servers:

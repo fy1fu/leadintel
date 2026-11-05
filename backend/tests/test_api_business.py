@@ -20,7 +20,9 @@ def _client(tmp_path):
     st = Settings(config_dir=REPO_ROOT / "config", data_dir=tmp_path)
     reg = load_registry(st.network_registry_path)
     store, guard = NetStore("sqlite://"), CostGuard(reg, st)
-    return TestClient(create_app(NetContext(st, reg, store, guard, Diagnostics(reg, st, store, guard))))
+    # LeadIntel accepts only 127.0.0.1/localhost as Host (DNS-rebinding defence), so tests use that base URL.
+    return TestClient(create_app(NetContext(st, reg, store, guard, Diagnostics(reg, st, store, guard))),
+                      base_url="http://127.0.0.1:8765")
 
 
 def test_prospect_list_profile_and_page(db, tmp_path, monkeypatch):

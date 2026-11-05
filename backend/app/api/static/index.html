@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="leadintel-token" content="__LEADINTEL_TOKEN__">
 <title>LeadIntel Prospects</title>
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
 <style>
@@ -51,7 +52,7 @@ table{border-collapse:collapse;width:100%;font-size:12.5px} td,th{text-align:lef
   <aside id="profile"><p class="sub">Select a prospect on the map or in the list. Scores are provisional until website research (Phase 2).</p></aside>
 </main>
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
-<script>
+<script nonce="__LEADINTEL_NONCE__">
 const $ = s => document.querySelector(s);
 const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
