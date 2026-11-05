@@ -7,10 +7,12 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from app.api.filters import (MAX_LEGACY_LIMIT, MAX_PAGE_SIZE, MAX_POINTS, FilterError, ProspectFilter,
+                             count_query, list_query, points_query, split_list, summary_query)
 from app.config import get_settings
 from app.db.session import DatabaseUnavailable, check_database, make_engine
 
@@ -36,35 +38,77 @@ def _rows(sql: str, **params) -> list[dict]:
         return [dict(r) for r in c.execute(text(sql), params).mappings()]
 
 
-LIST_SQL = """
-SELECT l.id, l.display_name AS name, coalesce(l.industry_profile, 'unclassified') AS industry, a.key AS county,
-  l.operating_status, ST_X(l.geom) AS lon, ST_Y(l.geom) AS lat, b.value AS bos, p.value AS lps, b.stage,
-  b.evidence_points, q.status AS qualification,
-  EXISTS (SELECT 1 FROM online_profile o WHERE o.location_id=l.id AND o.platform_kind='independent') AS website_listed,
-  EXISTS (SELECT 1 FROM location_contact lc JOIN contact_point c ON c.id=lc.contact_point_id
-          WHERE lc.location_id=l.id AND lc.active AND c.kind='phone') AS has_phone
-FROM location l
-JOIN area a ON a.kind='county' AND a.is_target AND a.spec->>'geoid' = l.county_fips
-LEFT JOIN score b ON b.location_id=l.id AND b.kind='bos' AND b.superseded_at IS NULL
-LEFT JOIN score p ON p.location_id=l.id AND p.kind='lps' AND p.superseded_at IS NULL
-LEFT JOIN qualification q ON q.location_id=l.id AND q.superseded_at IS NULL
-WHERE l.merged_into_id IS NULL
-  AND (CAST(:county AS text) IS NULL OR a.key = CAST(:county AS text))
-  AND (CAST(:niche AS text) IS NULL OR l.industry_profile = CAST(:niche AS text))
-  AND (CAST(:quals AS text[]) IS NULL OR q.status = ANY(CAST(:quals AS text[])))
-  AND (CAST(:q AS text) IS NULL OR l.display_name ILIKE '%' || CAST(:q AS text) || '%')
-ORDER BY p.value DESC NULLS LAST, l.id
-LIMIT :limit
-"""
+def _scalar(sql: str, **params):
+    with engine().connect() as c:
+        return c.execute(text(sql), params).scalar()
+
+
+def prospect_filter(county: str | None = None, niche: str | None = None, qualification: str | None = None,
+                    q: str | None = None, website: str | None = None, operating: str | None = None,
+                    phone: bool | None = None, email: bool | None = None,
+                    bos_min: float | None = None, bos_max: float | None = None,
+                    lps_min: float | None = None, lps_max: float | None = None, sort: str = "lps") -> ProspectFilter:
+    """Query parameters -> ProspectFilter. Lists are comma-separated; a single value works as before (S2a)."""
+    try:
+        return ProspectFilter(counties=split_list(county), niches=split_list(niche),
+                              qualifications=split_list(qualification), q=q, website=split_list(website),
+                              operating=split_list(operating), phone=phone, email=email, bos_min=bos_min,
+                              bos_max=bos_max, lps_min=lps_min, lps_max=lps_max, sort=sort)
+    except FilterError as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
 
 
 @router.get("/prospects")
-def prospects(county: str | None = None, niche: str | None = None, qualification: str | None = None,
-              q: str | None = None, limit: int = Query(500, le=5000)) -> dict:
-    quals = qualification.split(",") if qualification else None
-    rows = _rows(LIST_SQL, county=county, niche=niche, quals=quals, q=q, limit=limit)
-    return {"count": len(rows), "items": rows,
-            "note": "Scores are provisional until website research (Phase 2) and competitor analysis (Phase 3)."}
+def prospects(f: ProspectFilter = Depends(prospect_filter),
+              page: int | None = Query(None, ge=1), page_size: int | None = Query(None, ge=1, le=MAX_PAGE_SIZE),
+              limit: int = Query(500, ge=1, le=MAX_LEGACY_LIMIT)) -> dict:
+    """Prospects matching the filters, server-side.
+
+    Paged mode (page and/or page_size given): ``page_size`` rows (default 50, at most 200) of page ``page``.
+    Legacy mode (neither given): the first ``limit`` rows (default 500, at most 5000), as before S2a.
+    ``count`` is the number of rows returned (unchanged meaning); ``total`` is every matching business.
+    """
+    paged = page is not None or page_size is not None
+    size = (page_size or 50) if paged else limit
+    pg = page or 1
+    sql, params = list_query(f, size, (pg - 1) * size if paged else 0)
+    rows = _rows(sql, **params)
+    csql, cparams = count_query(f)
+    total = int(_scalar(csql, **cparams) or 0)
+    out = {"count": len(rows), "total": total, "items": rows,
+           "note": "Scores are provisional until website research (Phase 2) and competitor analysis (Phase 3)."}
+    if paged:
+        out.update(page=pg, page_size=size, pages=(total + size - 1) // size, has_more=pg * size < total)
+    else:
+        out.update(limit=limit, truncated=total > len(rows))
+    return out
+
+
+@router.get("/prospects/summary")
+def prospects_summary(f: ProspectFilter = Depends(prospect_filter)) -> dict:
+    """How many businesses match, how many of them can be mapped, and how they split by qualification."""
+    sql, params = summary_query(f)
+    rows = _rows(sql, **params)
+    total = sum(int(r["n"]) for r in rows)
+    with_coords = sum(int(r["with_coordinates"]) for r in rows)
+    return {"total": total, "with_coordinates": with_coords, "without_coordinates": total - with_coords,
+            "by_qualification": {r["qualification"]: int(r["n"]) for r in rows}}
+
+
+@router.get("/prospects/points")
+def prospect_points(f: ProspectFilter = Depends(prospect_filter)) -> dict:
+    """Map points for the matching businesses that have coordinates (compact [id, lon, lat, qualification])."""
+    sql, params = points_query(f, MAX_POINTS)
+    rows = _rows(sql, **params)
+    truncated = len(rows) > MAX_POINTS
+    rows = rows[:MAX_POINTS]
+    ssql, sparams = summary_query(f)
+    srows = _rows(ssql, **sparams)
+    total = sum(int(r["n"]) for r in srows)
+    with_coords = sum(int(r["with_coordinates"]) for r in srows)
+    return {"points": [[r["id"], r["lon"], r["lat"], r["qualification"]] for r in rows],
+            "returned": len(rows), "total": total, "with_coordinates": with_coords,
+            "without_coordinates": total - with_coords, "limit": MAX_POINTS, "truncated": truncated}
 
 
 @router.get("/prospects/{location_id}")
