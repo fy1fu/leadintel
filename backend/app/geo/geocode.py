@@ -11,21 +11,25 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
+import time
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.db.models import GeocodeCache
 from app.net.http import InfraClient
-from app.net.mirrors import raise_for_retryable
+from app.net.mirrors import RetryableServiceError, raise_for_retryable
 from app.sources.common import download_checked
 
 ZCTA_COUNTY_URL = "https://www2.census.gov/geo/docs/maps-data/data/rel2020/zcta520/tab20_zcta520_county20_natl.txt"
 BATCH_URL = "https://geocoding.geo.census.gov/geocoder/geographies/addressbatch"
+log = logging.getLogger(__name__)
 
 
 def load_zip_counties(client: InfraClient, data_dir: Path, state_fips: str = "12") -> dict[str, set[str]]:
@@ -64,9 +68,31 @@ def _parse_batch(text: str) -> dict[str, GeoResult]:
 
 
 class CensusGeocoder:
-    def __init__(self, client: InfraClient, batch_size: int = 1000):
+    # The Census batch service has short outages (HTTP 502/503 seen live). One failed batch used to fail the
+    # whole Sunbiz placement step, so each batch is retried after these waits before giving up.
+    RETRY_DELAYS = (10.0, 30.0)
+
+    def __init__(self, client: InfraClient, batch_size: int = 1000, *, retry_delays: tuple[float, ...] | None = None,
+                 sleep=time.sleep):
         self.client = client
         self.batch_size = batch_size
+        self.retry_delays = self.RETRY_DELAYS if retry_delays is None else tuple(retry_delays)
+        self._sleep = sleep
+
+    def _post_batch(self, payload: bytes) -> httpx.Response:
+        """POST one batch; retry on 5xx/429, timeouts and dropped connections (not on other 4xx)."""
+        for attempt in range(len(self.retry_delays) + 1):
+            try:
+                resp = self.client.request("POST", BATCH_URL, data={"benchmark": "Public_AR_Current", "vintage": "Current_Current"},
+                                           files={"addressFile": ("batch.csv", payload, "text/csv")}, timeout=600)
+                return raise_for_retryable(resp, retry_404=False)
+            except (RetryableServiceError, httpx.TransportError) as exc:
+                if attempt == len(self.retry_delays):
+                    raise
+                log.warning("census geocoder batch attempt %d failed (%s); retrying in %.0fs", attempt + 1, exc,
+                            self.retry_delays[attempt])
+                self._sleep(self.retry_delays[attempt])
+        raise AssertionError("unreachable")
 
     def geocode(self, s: Session, items: dict[str, tuple[str, str, str, str]]) -> dict[str, GeoResult]:
         """items: cache_key -> (street, city, state, zip). Returns results for all keys (cached or new)."""
@@ -81,9 +107,7 @@ class CensusGeocoder:
             for n, k in enumerate(chunk):
                 street, city, state, zp = items[k]
                 w.writerow([n, street or "", city or "", state or "FL", zp or ""])
-            resp = self.client.request("POST", BATCH_URL, data={"benchmark": "Public_AR_Current", "vintage": "Current_Current"},
-                                       files={"addressFile": ("batch.csv", buf.getvalue().encode(), "text/csv")}, timeout=600)
-            raise_for_retryable(resp, retry_404=False)
+            resp = self._post_batch(buf.getvalue().encode())
             parsed = _parse_batch(resp.text)
             rows = []
             for n, k in enumerate(chunk):

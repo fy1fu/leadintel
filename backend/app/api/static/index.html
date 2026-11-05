@@ -85,10 +85,26 @@ async function loadCoverage() {
       $("#coverage").innerHTML = "<strong>No prospect data yet.</strong> Run <strong>Load Data</strong> (Start menu &rsaquo; LeadIntel &rsaquo; Load Data) to download public business data for the target counties, then refresh this page.";
       return;
     }
+    // Plain-language status for salespeople; the technical detail stays available on hover (title).
     const bad = c.coverage.filter(x => x.state !== "complete");
-    $("#coverage").innerHTML = `Run #${c.run.id} (${esc(c.run.status)}) · ` + (bad.length
-      ? `<strong>Coverage incomplete:</strong> ` + bad.map(x => `${esc(x.source)}/${esc(x.area)}: ${esc(x.state)}`).join(", ")
-      : "all sources complete for the target counties");
+    const when = c.run.finished_at || c.run.started_at;
+    const date = when ? new Date(when).toLocaleString([], {month: "short", day: "numeric", hour: "numeric", minute: "2-digit"}) : "";
+    const label = {overture: "business listings", sunbiz: "new business registrations (Sunbiz)", dbpr: "licence records"};
+    const missing = [...new Set(bad.map(x => label[x.source] || x.source))];
+    const banner = $("#coverage");
+    banner.title = `Run #${c.run.id} (${c.run.status})` + (bad.length ? "\n" + bad.map(x =>
+      `${x.source}/${x.area}: ${x.state}${x.reason ? " - " + x.reason : ""}`).join("\n") : "");
+    if (c.run.status === "running") {
+      banner.innerHTML = `<strong>Updating data…</strong> (started ${esc(date)}). Refresh this page when it has finished.`;
+    } else if (c.run.status === "failed" || c.run.status === "interrupted") {
+      banner.innerHTML = `The last data update (${esc(date)}) did not finish. Everything loaded before it is kept; ` +
+        `it will be retried at the next data update.`;
+    } else if (!bad.length) {
+      banner.textContent = `Data updated ${date}.`;
+    } else {
+      banner.innerHTML = `Data updated ${esc(date)}. Some ${esc(missing.join(" and "))} could not be loaded ` +
+        `(a data source was busy or unavailable). They will be retried at the next data update.`;
+    }
   } catch (e) { $("#coverage").textContent = "Coverage unavailable: " + e.message; }
 }
 
