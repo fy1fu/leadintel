@@ -41,7 +41,8 @@ from sqlalchemy.engine import Connection, Engine, make_url
 
 log = logging.getLogger(__name__)
 
-CRM_TABLES = ("crm_organization", "crm_user", "crm_prospect", "crm_activity", "crm_list", "crm_list_item")
+CRM_TABLES = ("crm_organization", "crm_user", "crm_prospect", "crm_activity", "crm_list", "crm_list_item",
+              "crm_saved_search")   # M3 (0007)
 CRM_READ_TABLES = ("location",)                        # the only business table the CRM login may read
 UPGRADE_KEY = 0x4C494355                               # 'LICU': db upgrade (exclusive) vs CRM writes (shared)
 RECHECK_S = 300.0

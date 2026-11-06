@@ -46,6 +46,12 @@ def _argv(cmd, tmp_path):
         return [name, str(tmp_path / "out.csv")]
     if name == "net-check":
         return [name, "--no-run", "--no-store"]
+    if name == "wqs-calibration":
+        if action == "report":
+            labels = tmp_path / "labels.csv"
+            labels.write_text("audit_id,wqs,human_overall_1_5\n")
+            return [name, action, "--labels", str(labels)]
+        return [name, action, "--out", str(tmp_path / "sheet.csv")]
     return [name] + ([action] if action else [])
 
 
@@ -100,17 +106,20 @@ ENGINE_FACTORIES = {"app/db/session.py", "app/db/locks.py", "app/net/store.py", 
 EXEMPT_ENGINES = {"app/db/locks.py": "the lock connection itself", "app/net/store.py": "diagnostics store (D9)",
                   "app/crm/access.py": "CRM login that the database restricts to the CRM tables (self_check)"}
 COMMIT_SITES = {"app/cli.py", "app/pipeline/discover.py", "app/db/session.py",
-                "app/sources/btr/storage.py"}   # import-btr (Phase B0), runs under the lock and the gate
+                "app/sources/btr/storage.py",   # import-btr (Phase B0), runs under the lock and the gate
+                "app/audit/service.py"}         # M3 website audit: under the maintenance lock and the gate
 # Modules that write inside the managed data folder; each must call ensure_write_allowed.
 MANAGED_FILE_WRITERS = {"app/sources/common.py", "app/sources/overture/snapshot.py", "app/sources/osm/extracts.py",
                         "app/sources/btr/storage.py",
                         "app/geo/places.py",   # M3: reduced Census Gazetteer JSON, written during Load Data
-                        "app/crawl/runner.py"}   # M3: crawl screenshots, under the maintenance lock
+                        "app/crawl/runner.py",   # M3: crawl screenshots, under the maintenance lock
+                        "app/audit/service.py"}  # M3: screenshot retention (deletes expired ones), under the lock
 # Writes that are NOT in the managed data folder, each for a documented reason.
 OTHER_FILE_WRITERS = {
     "app/cli.py": "net-check --markdown writes a report to a path the user chose",
     "app/reports/prospects.py": "export writes a CSV to a path the user chose",
     "app/net/service.py": "creates the diagnostics store's own folder (decision D9)",
+    "app/scoring/calibration.py": "wqs-calibration export writes a labelling sheet to a path the user chose",
 }
 FILE_WRITE = re.compile(r"os\.replace\(|os\.rename\(|os\.link\(|\.write_text\(|\.write_bytes\(|"
                         r"open\([^)]*['\"][wax]b?['\"]|\.unlink\(|shutil\.rmtree|\.mkdir\(|pq\.write_table")

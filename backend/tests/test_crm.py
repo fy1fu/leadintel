@@ -67,7 +67,7 @@ def test_migration_0006_creates_the_crm_tables_and_constraints(db):
     uniques = {u["name"] for u in insp.get_unique_constraints("crm_prospect")}
     assert "ux_crm_prospect_org_location" in uniques
     with db.connect() as c:
-        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0006"
+        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0007"
         checks = dict(c.execute(text("SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint "
                                      "WHERE conname IN ('ck_crm_prospect_status', 'ck_crm_activity_kind')")).all())
     assert all(f"'{s}'" in checks["ck_crm_prospect_status"] for s in CRM_STATUSES)
@@ -81,7 +81,7 @@ def test_single_alembic_head():
     from alembic.script import ScriptDirectory
     cfg = Config(str(Path(__file__).parents[1] / "alembic.ini"))
     cfg.set_main_option("script_location", str(Path(__file__).parents[1] / "migrations"))
-    assert ScriptDirectory.from_config(cfg).get_heads() == ["0006"]
+    assert ScriptDirectory.from_config(cfg).get_heads() == ["0007"]
 
 
 def test_database_refuses_a_second_local_organization_and_a_duplicate_prospect(biz, me):

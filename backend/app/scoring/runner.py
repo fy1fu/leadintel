@@ -144,7 +144,8 @@ def _score_batch(s, rows, cfg, versions, current, today, now, st):
     if not changed:
         return
     for table in ("score", "keyword_hit", "qualification"):
-        s.execute(text(f"UPDATE {table} SET superseded_at = :now WHERE superseded_at IS NULL AND location_id = ANY(:ids)"),
+        only = " AND kind IN ('bos', 'lps')" if table == "score" else ""   # M3: a WQS row belongs to its audit
+        s.execute(text(f"UPDATE {table} SET superseded_at = :now WHERE superseded_at IS NULL AND location_id = ANY(:ids){only}"),
                   {"now": now, "ids": changed})
     ids = s.execute(insert(Score).returning(Score.id, Score.location_id, Score.kind, sort_by_parameter_order=True), scores).all()
     frows = []

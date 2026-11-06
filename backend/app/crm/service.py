@@ -396,3 +396,85 @@ def dashboard(c: Connection) -> dict:
             "pipeline": {s: int(by_status.get(s, 0)) for s in CRM_STATUSES},
             "follow_ups": follow, "overdue": sum(1 for f in follow if f["due"] == "overdue"),
             "due_today": sum(1 for f in follow if f["due"] == "today"), "recent": recent}
+
+
+# ---------------------------------------------------------------- saved searches (M3, migration 0007)
+SAVED_KEYS = {"county", "niche", "qualification", "website", "operating", "sales", "q", "phone", "email", "lps_min",
+              "bos_min", "sort", "claim", "follow_up", "list_id", "near", "r", "ru", "nl", "all", "view"}
+MAX_SAVED_PARAMS = 4000
+
+
+def _check_saved_params(params: dict) -> dict:
+    """Saved-search parameters are the app's URL state; they must form a valid prospect search (same validation)."""
+    import json
+    if not isinstance(params, dict) or not params:
+        raise CrmError("a saved search needs its search parameters")
+    bad = sorted(k for k in params if k not in SAVED_KEYS)
+    if bad:
+        raise CrmError(f"unknown search parameters: {bad}")
+    if any(not isinstance(v, str) or len(v) > 1000 for v in params.values()):
+        raise CrmError("search parameters must be short texts")
+    if len(json.dumps(params)) > MAX_SAVED_PARAMS:
+        raise CrmError("search parameters are too long")
+    from app.api.filters import FilterError, ProspectFilter, split_list
+    try:
+        kw = {}
+        if "near" in params:
+            lat, sep, lon = params["near"].partition(",")
+            if not sep:
+                raise ValueError("near must be 'latitude,longitude'")
+            kw = {"near_lat": float(lat), "near_lon": float(lon), "radius_m": float(params.get("r", "nan"))}
+            if params.get("ru", "mi") not in ("mi", "km"):
+                raise ValueError("unknown radius unit")
+        elif any(k in params for k in ("r", "ru", "nl")):
+            raise ValueError("a radius needs a center (near)")
+        if params.get("view", "split") not in ("split", "list", "map"):
+            raise ValueError("unknown view")
+        yn = {"": None, "true": True, "false": False}
+        if params.get("phone", "") not in yn or params.get("email", "") not in yn:
+            raise ValueError("phone and email are 'true', 'false' or empty")
+        num = {k: float(params[k]) for k in ("lps_min", "bos_min") if params.get(k)}
+        ProspectFilter(qualifications=split_list(params.get("qualification")), website=split_list(params.get("website")),
+                       operating=split_list(params.get("operating")), sales=split_list(params.get("sales")),
+                       claim=params.get("claim") or None, follow_up=params.get("follow_up") or None,
+                       list_id=int(params["list_id"]) if params.get("list_id") else None,
+                       phone=yn[params.get("phone", "")], email=yn[params.get("email", "")],
+                       sort=params.get("sort") or "lps", crm=True, **num, **kw)
+    except (FilterError, ValueError) as exc:
+        raise CrmError(f"not a valid search: {exc}") from exc
+    return params
+
+
+def saved_searches(c: Connection) -> list[dict]:
+    me = identity(c)
+    if me is None:
+        return []
+    return [dict(r) for r in c.execute(text(
+        "SELECT id, name, params, version, created_at, updated_at FROM crm_saved_search "
+        "WHERE organization_id = CAST(:o AS uuid) ORDER BY lower(name)"), {"o": me.organization_id}).mappings()]
+
+
+def save_search(w: CrmWriter, name: str, params: dict) -> dict:
+    import json
+    name = (name or "").strip()
+    if not name or len(name) > 120:
+        raise CrmError("a saved search needs a name of 1-120 characters")
+    params = _check_saved_params(params)
+    with _tx(w) as c:
+        me = _require(c)
+        row = c.execute(text(
+            "INSERT INTO crm_saved_search (organization_id, name, params, created_by) "
+            "VALUES (CAST(:o AS uuid), :n, CAST(:p AS jsonb), CAST(:u AS uuid)) "
+            "ON CONFLICT (organization_id, name) DO UPDATE SET params = EXCLUDED.params, updated_at = now(), "
+            "version = crm_saved_search.version + 1 RETURNING id, version"),
+            {"o": me.organization_id, "n": name, "p": json.dumps(params), "u": me.user_id}).first()
+        return {"id": row[0], "name": name, "params": params, "version": row[1]}
+
+
+def delete_saved_search(w: CrmWriter, search_id: int) -> None:
+    with _tx(w) as c:
+        me = _require(c)
+        gone = c.execute(text("DELETE FROM crm_saved_search WHERE id = :i AND organization_id = CAST(:o AS uuid) "
+                              "RETURNING id"), {"i": search_id, "o": me.organization_id}).first()
+        if not gone:
+            raise NotFound("unknown saved search")

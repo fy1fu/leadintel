@@ -170,3 +170,27 @@ def dashboard() -> dict:
         if not crm.crm_available(c):
             return {"available": False, "configured": False}
         return {"available": True, **crm.dashboard(c)}
+
+
+# ---------------------------------------------------------------- saved searches (M3)
+class SavedSearchIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    params: dict
+
+
+@router.get("/saved-searches")
+def saved_searches() -> list[dict]:
+    e = engine()
+    with e.connect() as c:
+        return crm.saved_searches(c) if crm.crm_available(c) else []
+
+
+@router.post("/saved-searches")
+def save_search(body: SavedSearchIn) -> dict:
+    return _run(crm.save_search, _engines()[1], body.name, body.params)
+
+
+@router.delete("/saved-searches/{search_id}")
+def delete_search(search_id: int) -> dict:
+    _run(crm.delete_saved_search, _engines()[1], search_id)
+    return {"deleted": search_id}

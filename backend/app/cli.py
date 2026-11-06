@@ -21,7 +21,8 @@ EXIT_CODES_HELP = f"""exit codes (business commands):
 # lock; tests/test_write_coverage.py fails if a command is added without being classified here.
 WRITING_COMMANDS = {("db", "upgrade"), ("config", "seed"), ("discover", None), ("score", None), ("import-btr", None)}
 READING_COMMANDS = {("net-check", None), ("db", "status"), ("config", "show"), ("config", "history"),
-                    ("report", None), ("export", None)}
+                    ("report", None), ("export", None), ("wqs-calibration", "export"),
+                    ("wqs-calibration", "report")}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -62,6 +63,11 @@ def build_parser() -> argparse.ArgumentParser:
     ex.add_argument("--email", choices=["listed", "none"], help="email listed in a source, or none listed")
     ex.add_argument("--sort", choices=["lps", "bos", "name"], default="lps")
     ex.add_argument("--limit", type=int, default=100000)
+    wc = sub.add_parser("wqs-calibration", help="WQS calibration: export a labelling sheet or report agreement")
+    wc.add_argument("action", choices=["export", "report"])
+    wc.add_argument("--out", type=Path, help="export: CSV sheet to write")
+    wc.add_argument("--labels", type=Path, help="report: the filled-in labelling sheet")
+    wc.add_argument("--limit", type=int, default=200)
     bt = sub.add_parser("import-btr", help="import a county business-tax-receipt CSV (manual export)")
     bt.add_argument("path", type=Path)
     bt.add_argument("--county", required=True, help="target area key, e.g. st_johns")
@@ -201,6 +207,22 @@ def _business(args) -> int:
             return 2
         print(json.dumps({"action": out.action, "stored": out.stored, **out.stats, "warnings": out.warnings},
                          indent=2, default=str))
+        return 0
+    if args.cmd == "wqs-calibration":
+        from app.scoring import calibration
+        if args.action == "report":
+            if not args.labels:
+                print("leadintel wqs-calibration report: --labels FILE is required", file=sys.stderr)
+                return 2
+            print(json.dumps(calibration.report(args.labels), indent=2))
+            return 0
+        if not args.out:
+            print("leadintel wqs-calibration export: --out FILE is required", file=sys.stderr)
+            return 2
+        from app.db.session import make_engine
+        with make_engine(settings).connect() as c:
+            n = calibration.export_sheet(c, args.out, args.limit)
+        print(f"wrote {n} audited websites to {args.out}; fill in the human_* columns and run the report")
         return 0
     if args.cmd in ("score", "report", "export"):
         from sqlalchemy import text

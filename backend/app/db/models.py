@@ -552,3 +552,124 @@ class CrmListItem(Base):
     location_id: Mapped[int] = mapped_column(ForeignKey("location.id"), primary_key=True, index=True)
     added_by = mapped_column(UUID(as_uuid=False), ForeignKey("crm_user.id"))
     added_at: Mapped[datetime] = _now()
+
+
+# ---------------------------------------------------------------- M3: website audits (migration 0007)
+AUDIT_STATUSES = ("running", "completed", "partial", "failed", "blocked", "robots_disallowed", "robots_unavailable",
+                  "no_website", "interrupted")
+
+
+class WebsiteAudit(Base):
+    """One website audit of one business. Pages, findings, artifacts and recommendations hang off it; the WQS also
+    goes into `score` (kind 'wqs') with per-dimension factors. Screenshots stay in the managed data folder."""
+    __tablename__ = "website_audit"
+    id: Mapped[int] = _pk()
+    location_id: Mapped[int] = mapped_column(ForeignKey("location.id"), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    start_url: Mapped[str | None] = mapped_column(Text)
+    reason: Mapped[str | None] = mapped_column(Text)
+    robots: Mapped[str | None] = mapped_column(String(16))
+    crawl_delay_s: Mapped[float | None] = mapped_column(Float)
+    pages_crawled: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    requested_by: Mapped[str | None] = mapped_column(UUID(as_uuid=False))
+    started_at: Mapped[datetime] = _now()
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    wqs: Mapped[float | None] = mapped_column(Float)
+    wqs_confidence: Mapped[float | None] = mapped_column(Float)
+    wqs_version: Mapped[str | None] = mapped_column(String(20))
+    wqs_status: Mapped[str | None] = mapped_column(String(20))
+    dimensions: Mapped[dict] = mapped_column(JSONB, server_default="{}", nullable=False)
+    explanation: Mapped[list] = mapped_column(JSONB, server_default="[]", nullable=False)
+    observations: Mapped[dict] = mapped_column(JSONB, server_default="{}", nullable=False)   # domain history, timing
+    score_id: Mapped[int | None] = mapped_column(ForeignKey("score.id"))
+    __table_args__ = (Index("ix_website_audit_location", "location_id", "started_at"),
+                      CheckConstraint("status IN " + str(AUDIT_STATUSES), name="ck_website_audit_status"))
+
+
+class WebsiteAuditPage(Base):
+    __tablename__ = "website_audit_page"
+    id: Mapped[int] = _pk()
+    audit_id: Mapped[int] = mapped_column(ForeignKey("website_audit.id", ondelete="CASCADE"), nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    final_url: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[int | None] = mapped_column(Integer)
+    title: Mapped[str | None] = mapped_column(Text)
+    html_bytes: Mapped[int | None] = mapped_column(Integer)
+    text_sha256: Mapped[str | None] = mapped_column(String(64))
+    links: Mapped[int | None] = mapped_column(Integer)
+    elapsed_ms: Mapped[int | None] = mapped_column(Integer)
+    blocked_reason: Mapped[str | None] = mapped_column(Text)
+    error: Mapped[str | None] = mapped_column(Text)
+    facts: Mapped[dict | None] = mapped_column(JSONB)
+    axe: Mapped[list | None] = mapped_column(JSONB)
+    __table_args__ = (UniqueConstraint("audit_id", "seq", name="ux_website_audit_page_seq"),)
+
+
+class WebsiteAuditArtifact(Base):
+    """A file in the managed data folder (path relative to it), with checksum and size; never the bytes."""
+    __tablename__ = "website_audit_artifact"
+    id: Mapped[int] = _pk()
+    audit_id: Mapped[int] = mapped_column(ForeignKey("website_audit.id", ondelete="CASCADE"), nullable=False, index=True)
+    page_id: Mapped[int | None] = mapped_column(ForeignKey("website_audit_page.id", ondelete="CASCADE"))
+    kind: Mapped[str] = mapped_column(String(24), nullable=False)
+    rel_path: Mapped[str] = mapped_column(Text, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = _now()
+
+
+class WebsiteAuditFinding(Base):
+    __tablename__ = "website_audit_finding"
+    id: Mapped[int] = _pk()
+    audit_id: Mapped[int] = mapped_column(ForeignKey("website_audit.id", ondelete="CASCADE"), nullable=False, index=True)
+    criterion: Mapped[str] = mapped_column(String(60), nullable=False)
+    dimension: Mapped[str] = mapped_column(String(16), nullable=False)
+    kind: Mapped[str] = mapped_column(String(10), nullable=False)          # measured | heuristic
+    passed: Mapped[bool | None] = mapped_column(Boolean)                    # NULL = not assessed (never "failed")
+    weight: Mapped[float] = mapped_column(Float, nullable=False)
+    evidence: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    measured_at: Mapped[datetime] = _now()
+
+
+class WebsiteAuditRecommendation(Base):
+    __tablename__ = "website_audit_recommendation"
+    id: Mapped[int] = _pk()
+    audit_id: Mapped[int] = mapped_column(ForeignKey("website_audit.id", ondelete="CASCADE"), nullable=False, index=True)
+    criterion: Mapped[str] = mapped_column(String(60), nullable=False)
+    severity: Mapped[str] = mapped_column(String(10), nullable=False)       # high | medium | low
+    priority: Mapped[int] = mapped_column(Integer, nullable=False)          # 1 = first
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    finding: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence: Mapped[str] = mapped_column(Text, nullable=False)
+    why: Mapped[str] = mapped_column(Text, nullable=False)
+    suggestion: Mapped[str] = mapped_column(Text, nullable=False)
+    benchmark: Mapped[str | None] = mapped_column(Text)
+
+
+class WebsiteBenchmark(Base):
+    """Peer comparison as computed for one audit (snapshot: the peer set can change later)."""
+    __tablename__ = "website_benchmark"
+    id: Mapped[int] = _pk()
+    audit_id: Mapped[int] = mapped_column(ForeignKey("website_audit.id", ondelete="CASCADE"), nullable=False, unique=True)
+    scope: Mapped[str] = mapped_column(String(10), nullable=False)          # county | region | none
+    niche: Mapped[str | None] = mapped_column(String(40))
+    area: Mapped[str | None] = mapped_column(Text)
+    peers: Mapped[int] = mapped_column(Integer, nullable=False)
+    stats: Mapped[dict] = mapped_column(JSONB, server_default="{}", nullable=False)
+    computed_at: Mapped[datetime] = _now()
+
+
+class CrmSavedSearch(Base):
+    """A named prospect search: all filters, the Search Area (center, radius in metres, display unit), sort and view."""
+    __tablename__ = "crm_saved_search"
+    id: Mapped[int] = _pk()
+    organization_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("crm_organization.id"), nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    params: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, server_default="1", nullable=False)
+    created_by: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("crm_user.id"))
+    created_at: Mapped[datetime] = _now()
+    updated_at: Mapped[datetime] = _now()
+    __table_args__ = (UniqueConstraint("organization_id", "name", name="ux_crm_saved_search_org_name"),)
