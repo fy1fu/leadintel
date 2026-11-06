@@ -31,8 +31,19 @@ Updated: 2026-11-06.
 
 ## Test results (latest)
 
-- Full suite on `leadintel_test` (synthetic data, migrated to 0006): 909 passed, 6 skipped (Search Area server,
-  canonical radius limits and center search).
+- Full suite on `leadintel_test` (synthetic data, migrated to 0006): 959 passed, 6 skipped (Search Area, center
+  search and the crawler egress proxy).
+- Crawler egress proxy (`tests/test_browser_proxy.py`, 50 tests, offline, synthetic local servers):
+  - credentials required; loopback-only listener;
+  - HTTP forwarding and CONNECT tunnels go to the address the proxy checked;
+  - 11 kinds of private/special address refused by IP and by name; internal hostnames refused without DNS;
+  - DNS answers pointing inside refused, including mixed answers; one resolution per connection, so a changing
+    answer cannot redirect;
+  - only allowed ports; paid-provider hosts refused;
+  - malformed, oversized and credential-bearing requests refused; byte limit; connection cap; DNS failure reported.
+
+  End-to-end with real Chromium: public synthetic site loads; 127.0.0.1, localhost and a rebinding name get the
+  proxy's 403; page-script fetches to the private service fail; the private service received 0 requests.
 - Center search (`tests/test_geo_search.py`, 18 tests, network mocked):
   - Gazetteer parsing and the Load Data download/reduce step: needs the maintenance lock; keeps the previous file if
     the download looks empty; never makes a run partial;
@@ -137,7 +148,7 @@ Plan, architecture, acceptance tests and decisions: [research/M3_PREP.md](resear
 | Step | What | Migration | State |
 |---|---|---|---|
 | 1 | **Search Area** (core feature, [PLAN.md §14](PLAN.md)): off until enabled, then a 10-mile circle with adjustable center (search, map click, marker drag; panning never moves it) and radius (miles/km); server-side PostGIS geodesic filter on the existing index in the shared `ProspectFilter`, so list, counts, map, export and sales filters agree | none | **done** (server filter; Area panel and chip, draggable center marker, server circle, slider and number with mi/km, pick-on-map, URL with Back/Forward, stale-response guards; center search by business, ZIP code, city and street address). Windows check pending |
-| 2 | Browser egress proxy (SSRF / DNS rebinding) | none | designed |
+| 2 | Browser egress proxy (SSRF / DNS rebinding) | none | **done** (`app/net/browser_proxy.py`; same rules as the website fetcher; Chromium flags in `chromium_args()`) |
 | 3 | Crawl runner (robots, rate limits, isolated contexts, screenshots, maintenance lock) | none | designed |
 | 4 | Measured / heuristic checks and axe-core; fixture-site suite | none | designed |
 | 5 | Schema: crawl / page / evidence, WQS results, saved searches | `0007` (additive, `leadintel_test` only) | planned |
@@ -156,4 +167,6 @@ Decisions recorded 2026-11-06:
 
 1. Your decision on building the M2 TEST ZIP (the previous M2 TEST ZIP, from `03080b3f`, was deleted before the
    security fix and never distributed).
-2. M3 step 2: browser egress proxy (SSRF / DNS rebinding) as the foundation of the crawler, then the crawl runner.
+2. M3 step 3: crawl runner (Python Playwright driving the installed Edge through the egress proxy; robots.txt,
+   rate limits, isolated contexts, screenshots; maintenance lock). Adds the Python Playwright dependency (licence
+   to confirm from the package metadata) and its entry in the Windows lock file.
