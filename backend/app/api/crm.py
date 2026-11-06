@@ -82,7 +82,7 @@ def me() -> dict:
 def set_me(body: MeIn) -> dict:
     _, ce = _engines()
     who = _run(crm.setup_identity, ce, body.display_name, body.initials, body.email)
-    return {"available": True, "configured": True, "me": who.__dict__}
+    return {"available": True, "configured": True, "me": who.__dict__, "write_mode": ce.mode, "write_mode_reason": ce.reason}
 
 
 @router.get("/users")

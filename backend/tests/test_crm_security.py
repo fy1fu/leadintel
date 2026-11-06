@@ -318,6 +318,9 @@ def test_api_reports_the_write_mode(setup, monkeypatch):
         c = TestClient(create_app(SimpleNamespace(diagnostics=None), token="t" * 40), base_url="http://127.0.0.1:8765")
         me = c.get("/api/crm/me").json()
         assert me["write_mode"] == "independent"
+        saved = c.post("/api/crm/me", json={"display_name": "Sec Seller", "initials": "SS"},
+                       headers={"X-LeadIntel-Token": "t" * 40, "Origin": "http://127.0.0.1:8765"}).json()
+        assert saved["write_mode"] == "independent" and saved["configured"]
         monkeypatch.delenv("LEADINTEL_CRM_DATABASE_URL")
         assert c.get("/api/crm/me").json()["write_mode"] == "shared_lock"
     finally:

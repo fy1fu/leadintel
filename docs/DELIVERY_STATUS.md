@@ -22,11 +22,12 @@ Updated: 2026-11-06.
 | Schema | Migration `0006` (single head): `crm_organization`, `crm_user` (UUID ids), `crm_prospect` (one row per organization and business, unique), `crm_activity` (append-only), `crm_list`, `crm_list_item`. Additive; downgrade drops only these tables | done |
 | Service | Profile setup, claim / release / reassign, pipeline status, next action, follow-up date, notes and contact history (call, email, meeting, visit), lists and campaigns, dashboard | done |
 | Concurrency | Claim is a conditional update (two simultaneous claims: exactly one wins); edits use an optimistic `version` (stale saves get a clear "changed elsewhere" message) | done |
-| Write safety | Security review (see [security/M2_CRM_WRITE_PATH.md](security/M2_CRM_WRITE_PATH.md)): the original text-only guard was bypassable (8 demonstrated ways) and is replaced. Default: CRM writes take the maintenance lock (B0 unchanged; "paused" during Load Data). Writes during Load Data only through a separate `leadintel_crm` login that PostgreSQL restricts to the CRM tables, verified by a self-check before use; any doubt falls back to the lock. Upgrades exclude CRM writes via an advisory key | done (`03080b3f` + security fix) |
+| Write safety | Security review (see [security/M2_CRM_WRITE_PATH.md](security/M2_CRM_WRITE_PATH.md)): the original text-only guard was bypassable (8 demonstrated ways) and is replaced. Default: CRM writes take the maintenance lock (B0 unchanged; "paused" during Load Data). Writes during Load Data only through a separate `leadintel_crm` login that PostgreSQL restricts to the CRM tables, verified by a self-check before use; any doubt falls back to the lock. Upgrades exclude CRM writes via an advisory key | done (`03080b3f`, fix `4edf41ac`) |
 | API | `/api/crm/*` (token and same-origin rules apply to every write); sales filters on list, counts, map and export (`sales`, `claim`, `follow_up`, `list_id`, sort by follow-up); CRM columns in the CSV export | done |
 | Interface | Profile dialog, Sales section in the business view (claim, status, next action, follow-up date, activity log and timeline, lists), sales filters and list tags, Sales overview (pipeline, follow-ups, recent activity, lists and campaigns) | done |
 | Setup | Creates the `leadintel_crm` login (no role attributes, NOINHERIT, own DPAPI secret); `db upgrade` sets its privileges | done, Windows check pending |
-| Windows | M2 TEST ZIP and combined M1+M2 checklist on a disposable installation | in progress - never on the real Friend Edition without approval |
+| Builder | Secret scan: one exact allow-list entry for the DPAPI-backed sales URL template in `common.ps1`; patterns unchanged | done (`ffa76b92`) |
+| Windows | Combined M1+M2 procedure on a separate Windows test account ([windows/M1_M2_TEST_PROCEDURE.md](windows/M1_M2_TEST_PROCEDURE.md)); profile dialog states whether sales changes continue during Load Data | procedure ready; M2 TEST ZIP not built (awaiting your decision) |
 
 ## Test results (latest)
 
@@ -75,5 +76,5 @@ Updated: 2026-11-06.
 
 ## Next exact action
 
-Commit the security fix; rebuild and verify the M2 TEST ZIP; write the combined M1+M2 Windows procedure for a
-disposable installation; M3 preparation and research notes.
+Your decision on building the M2 TEST ZIP (the previous M2 TEST ZIP, from `03080b3f`, was deleted before the
+security fix and never distributed). Meanwhile: M3 preparation and research notes.

@@ -390,6 +390,9 @@ let profileWaiters = [];
 function openProfile() {
   const f = $("#profile-form"), me = state.crm.me || {};
   f.display_name.value = me.display_name || ""; f.initials.value = me.initials || ""; f.email.value = me.email || "";
+  $("#write-mode").textContent = state.crm.write_mode === "independent"
+    ? "Sales changes: also saved while Load Data runs (separate, restricted database account)."
+    : "Sales changes: paused while Load Data runs (shared database lock).";
   $("#profile").showModal(); f.display_name.focus();
 }
 function ensureProfile() {
