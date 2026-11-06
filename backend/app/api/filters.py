@@ -36,8 +36,8 @@ SORTS = ("lps", "bos", "name", "follow_up", "distance")
 # Search area: units and limits (PLAN.md §14.2). Exact conversion factors; the radius is handled in metres.
 UNIT_M = {"mi": 1609.344, "km": 1000.0, "m": 1.0}
 AREA_UNITS = ("mi", "km")         # what users and the API may use; metres are internal only
-AREA_MIN_M = 400.0                 # 0.25 mi (402 m) and 0.4 km both satisfy this; anything smaller is refused
-AREA_MAX_M = 100 * 1609.344        # 100 mi = 160,934.4 m (also covers 160 km)
+AREA_MIN_M = 400.0                 # canonical range in metres: 400 m (0.4 km, about 0.25 mi) ...
+AREA_MAX_M = 100 * 1609.344        # ... to 160,934.4 m (100 mi, about 160.93 km); unit limits are derived from these
 AREA_MAX_ABS_LAT = 85.0
 # Inclusive boundary: a business exactly on the circle is inside. ST_Distance and ST_DWithin (and a radius converted
 # from mi/km) can differ by floating-point noise, so 1 cm is added; stored coordinates are only ~1 cm precise anyway.
@@ -242,8 +242,8 @@ class ProspectFilter:
             raise FilterError(f"near_lat must be between -{AREA_MAX_ABS_LAT:g} and {AREA_MAX_ABS_LAT:g}")
         if abs(self.near_lon) > 180:
             raise FilterError("near_lon must be between -180 and 180")
-        if not AREA_MIN_M <= self.radius_m <= AREA_MAX_M + 1e-6:
-            raise FilterError(f"radius must be between 0.25 and 100 miles ({AREA_MIN_M:g}-{AREA_MAX_M:g} m)")
+        if not AREA_MIN_M - 1e-6 <= self.radius_m <= AREA_MAX_M + 1e-6:   # 1e-6 m: unit-conversion rounding only
+            raise FilterError("radius must be between 400 m and 160,934.4 m (0.4-160.93 km, about 0.25-100 mi)")
 
     def without_area(self) -> "ProspectFilter":
         """The same filter with the area removed (to count matches the area leaves out for lack of coordinates)."""

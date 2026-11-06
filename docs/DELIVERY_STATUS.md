@@ -31,8 +31,9 @@ Updated: 2026-11-06.
 
 ## Test results (latest)
 
-- Full suite on `leadintel_test` (synthetic data, migrated to 0006): 879 passed, 6 skipped (with the Search Area server).
-- Search Area (`tests/test_search_area.py`, 97 tests):
+- Full suite on `leadintel_test` (synthetic data, migrated to 0006): 891 passed, 6 skipped (with the Search Area server
+  and canonical radius limits).
+- Search Area (`tests/test_search_area.py`, 112 tests):
   - the boundary is inclusive at 8 bearings, with ±1 m checked;
   - results agree with an independent WGS84 (Vincenty) computation at 0.25–18 mi;
   - miles and kilometres give identical results;
@@ -42,6 +43,7 @@ Updated: 2026-11-06.
   - sales filters combined with the area;
   - the box prefilter loses nothing at 25–60° latitude and 100 mi;
   - 16 kinds of invalid input are refused on 4 endpoints;
+  - one canonical range (400 m to 160,934.4 m) accepted at both ends in miles and km, just outside refused;
   - the circle endpoint matches the geodesic radius within 0.1 %.
 - Search Area frontend: headless walkthrough with the real MapLibre 4.7.1, 97 checks each at 1920×1080, 1440×900
   and 1366×768. Covered:

@@ -385,3 +385,31 @@ def test_filter_object_rejects_bad_types_directly():
                {"near_lat": 30.0, "near_lon": 1.0, "radius_m": float("inf")}):
         with pytest.raises(FilterError):
             ProspectFilter(**kw)
+
+
+# ---------------------------------------------------------------- one canonical range in metres, both units
+@pytest.mark.parametrize("radius,unit,metres", [
+    (0.4, "km", 400.0),                       # canonical minimum
+    (400 / 1609.344, "mi", 400.0),            # the same minimum as the browser sends it in miles (0.2485 mi)
+    (0.25, "mi", 402.336),
+    (100, "mi", 160934.4),                    # canonical maximum
+    (160934.4 / 1000, "km", 160934.4),        # the same maximum as the browser sends it in km (160.9344 km)
+    (160.9344, "km", 160934.4),
+    (160, "km", 160000.0),
+])
+def test_canonical_limits_are_accepted_in_both_units(client, db, radius, unit, metres):
+    with Session(db) as s:
+        _area(s, "duval", "12031", (-83, 29, -80, 32))
+        s.commit()
+    r = client.get("/api/prospects/summary", params=_area_params(radius=radius, unit=unit))
+    assert r.status_code == 200, r.text
+    assert abs(r.json()["area"]["radius_m"] - metres) < 1e-6
+    c = client.get("/api/geo/circle", params=_area_params(radius=radius, unit=unit))
+    assert c.status_code == 200 and abs(c.json()["radius_m"] - metres) < 1e-6
+
+
+@pytest.mark.parametrize("radius,unit", [(0.39999, "km"), (399.99 / 1609.344, "mi"), (0.2485, "mi"),
+                                         (160.935, "km"), (100.0001, "mi")])
+def test_just_outside_the_canonical_range_is_refused_in_both_units(client, radius, unit):
+    for path in ("/api/prospects", "/api/geo/circle"):
+        assert client.get(path, params=_area_params(radius=radius, unit=unit)).status_code == 422
