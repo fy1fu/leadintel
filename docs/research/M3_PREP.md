@@ -148,7 +148,7 @@ Each needs a terms-of-use check and a field mapping before ingestion. None chang
 |---|---|---|
 | Lighthouse | Apache-2.0 ([licenses.dev](https://licenses.dev/npm/lighthouse/9.6.8)) | Deferred: would need a bundled Node.js runtime |
 | axe-core | MPL-2.0 ([licenses.dev](https://licenses.dev/npm/axe-core/4.7.0)) | Ship the unmodified file with its licence notice. MPL is file-level copyleft and does not affect LeadIntel's own code |
-| Playwright (Python) | Apache-2.0 (to confirm from the package metadata at implementation time) | Uses the installed Edge, so no browser download |
+| Playwright (Python) | Apache-2.0 (confirmed 2026-11-06 from the 1.63.0 package metadata: `License-Expression` and the bundled LICENSE) | Uses the installed Edge, so no browser download; optional `crawl` extra |
 | Microsoft Edge / WebView2 Runtime | Free, already installed on Windows 10/11 | — |
 | Census API | Free key | Approved; kept out of source control |
 | CrUX API, SAM.gov API | Free, but each needs a key or account | Not approved / not used |
