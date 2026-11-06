@@ -214,6 +214,21 @@ def _run_locked(settings, engine, cfg, reg, guard, client, area_keys, since, unt
             _cov(s, run.id, "dbpr", areas, "not_run", "no DBPR files configured in the active 'sources' settings")
             s.commit()
 
+        # ---------------------------------------------------------------- places for the Search Area center (M3)
+        # Census Gazetteer ZIP-code and city centers. Optional: a failure is recorded in the counts and logged, but
+        # never makes the run partial (it only affects choosing a center by ZIP code or city name).
+        try:
+            states = {f[:2] for f in target_fips}
+            if states == {"12"}:
+                from app.geo.places import refresh_gazetteer
+                counts["gazetteer"] = refresh_gazetteer(client, settings.data_dir,
+                                                        set(load_zip_counties(client, settings.data_dir)))
+            else:
+                counts["gazetteer"] = {"skipped": f"only Florida is supported for now (states {sorted(states)})"}
+        except Exception as exc:  # noqa: BLE001
+            log.warning("gazetteer refresh failed: %s", exc)
+            counts["gazetteer"] = {"error": f"{type(exc).__name__}: {exc}"}
+
         # ---------------------------------------------------------------- resolution + summary
         dst = dedupe_locations(s, sorted(target_fips))
         counts["dedupe"] = dst.__dict__

@@ -36,6 +36,10 @@
     <div class="fgroup"><h3>Sort by</h3>
       <select id="sort"><option value="lps">Lead priority (LPS)</option><option value="bos">Business opportunity (BOS)</option><option value="name">Name</option><option value="follow_up" data-crm hidden>Follow-up date</option><option value="distance" data-area hidden>Distance from center</option></select></div>
     <div class="fgroup" id="g-area"><h3>Search area</h3>
+      <div class="area-find">
+        <input id="area-find" type="search" maxlength="200" autocomplete="off" placeholder="Address, ZIP, city or business"
+          aria-label="Find a center for the search area" aria-controls="area-results" title="Type to search; press Enter to look up a street address">
+        <div id="area-results" class="area-results" role="listbox" aria-label="Places found" hidden></div></div>
       <div id="area-off">
         <button type="button" class="btn" id="area-on">Search around a point</button>
         <p class="hint">Limits every result to a circle (10 miles to start). Move it by dragging its center on the map.</p></div>

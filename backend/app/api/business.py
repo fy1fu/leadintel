@@ -5,6 +5,7 @@ diagnostics (other router) keep working because they never use this database.
 """
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -14,8 +15,8 @@ from sqlalchemy.engine import Engine
 
 from app.api.filters import (MAX_LEGACY_LIMIT, MAX_PAGE_SIZE, MAX_POINTS, OPERATING_STATUSES, QUALIFICATIONS,
                              CLAIM_FILTERS, FOLLOW_UP_FILTERS, SALES_STATUSES, SORTS, WEBSITE_STATUSES, FilterError, ProspectFilter, count_query, list_query,
-                             UNIT_M, excluded_no_location_query, points_query, radius_to_m, split_list,
-                             summary_query)
+                             UNIT_M, excluded_no_location_query, like_escape, points_query, radius_to_m,
+                             split_list, summary_query)
 from app.api.security import safe_link
 from app.config import get_settings
 from app.reports.prospects import MAX_EXPORT
@@ -164,6 +165,79 @@ def geo_circle(near_lat: float, near_lon: float, radius: float, unit: str = "mi"
     return {"center": [f.near_lon, f.near_lat], "radius_m": f.radius_m, "unit": unit,
             "radius": f.radius_m / UNIT_M[unit], "geometry": json.loads(row["geojson"]),
             "beyond_target_counties": row["beyond_target_counties"]}
+
+
+# ---------------------------------------------------------------- Search Area: finding a center (M3)
+GEO_SEARCH_MAX = 200
+_ADDRESS_LIKE = re.compile(r"^\d+[a-zA-Z]?\s+\S+.*[a-zA-Z]")       # "117 W Duval St ..." : a number, then words
+_HAS_STATE = re.compile(r"(,|\s)(fl|florida)\b|\b\d{5}\b", re.I)
+
+
+def _geocoder_client():
+    """A safe-egress client for the Census one-line geocoder (tests replace this)."""
+    from app.costs.guard import CostGuard
+    from app.net.http import InfraClient
+    from app.net.registry import load_registry
+    settings = get_settings()
+    registry = load_registry(settings.network_registry_path)
+    return InfraClient(registry, settings, CostGuard(registry, settings), timeout=15)
+
+
+def _in_target_counties(results: list[dict]) -> None:
+    """Marks each result inside / outside the loaded target counties (None when no county outline is loaded)."""
+    if not results:
+        return
+    rows = _rows(
+        "SELECT u.i AS i, CASE WHEN t.g IS NULL THEN NULL ELSE ST_Intersects(ST_SetSRID(ST_MakePoint(u.x, u.y), 4326), t.g) END "
+        "AS inside FROM unnest(CAST(:xs AS float8[]), CAST(:ys AS float8[])) WITH ORDINALITY AS u(x, y, i), "
+        "(SELECT ST_Union(geom) AS g FROM area WHERE kind = 'county' AND is_target AND geom IS NOT NULL) t",
+        xs=[r["lon"] for r in results], ys=[r["lat"] for r in results])
+    for row in rows:
+        results[int(row["i"]) - 1]["in_target_counties"] = row["inside"]
+
+
+@router.get("/geo/search")
+def geo_search(q: str = Query("", max_length=GEO_SEARCH_MAX), online: bool = False) -> dict:
+    """Candidates for a search-area center: businesses (own location), ZIP codes and cities (Census Gazetteer,
+    local), and - only when ``online`` is set - street addresses (free Census one-line geocoder, via safe egress).
+    Reads only; nothing is stored."""
+    from app.geo.places import find_places, find_zip, load_gazetteer
+    from app.normalize.core import name_norm
+    q = " ".join(q.split())
+    out: dict = {"query": q, "results": [], "notes": []}
+    if len(q) < 2:
+        return out
+    results = []
+    norm = name_norm(q)
+    if norm:
+        results += [{"kind": "business", "label": r["name"], "lat": r["lat"], "lon": r["lon"], "id": r["id"],
+                     "precision": "business location", "source": "LeadIntel"} for r in _rows(
+            "SELECT l.id, l.display_name AS name, ST_Y(l.geom) AS lat, ST_X(l.geom) AS lon FROM location l "
+            "WHERE l.merged_into_id IS NULL AND l.geom IS NOT NULL AND l.name_norm ILIKE :p ESCAPE '\\' "
+            "ORDER BY similarity(l.name_norm, :n) DESC, l.id LIMIT 5", p=f"%{like_escape(norm)}%", n=norm)]
+    gaz = load_gazetteer(get_settings().data_dir)
+    if gaz is None:
+        out["notes"].append("ZIP code and city search becomes available after the next Load Data.")
+    results += find_zip(gaz, q) + find_places(gaz, q)
+    if online and _ADDRESS_LIKE.match(q):
+        try:
+            from app.geo.geocode import geocode_one_line
+            with _geocoder_client() as client:
+                found = geocode_one_line(client, q)
+                if not found and not _HAS_STATE.search(q):            # "117 W Duval St" alone: try within Florida
+                    found = geocode_one_line(client, f"{q}, FL")
+            results += [{"kind": "address", "label": f["label"], "lat": f["lat"], "lon": f["lon"],
+                         "precision": "street address", "source": "Census Geocoder"} for f in found]
+            if not found:
+                out["notes"].append("No street address matched. Include the city or ZIP code, or pick the center on the map.")
+        except Exception as exc:  # noqa: BLE001 - the lookup is optional; local results still count
+            out["notes"].append(f"The address lookup is unavailable right now ({type(exc).__name__}). "
+                                "ZIP codes, cities and businesses still work.")
+    elif _ADDRESS_LIKE.match(q):
+        out["notes"].append("Press Enter to look up this street address.")
+    _in_target_counties(results)
+    out["results"] = results
+    return out
 
 
 def _with_links(contacts: list[dict]) -> list[dict]:

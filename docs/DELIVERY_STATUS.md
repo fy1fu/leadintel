@@ -31,8 +31,24 @@ Updated: 2026-11-06.
 
 ## Test results (latest)
 
-- Full suite on `leadintel_test` (synthetic data, migrated to 0006): 891 passed, 6 skipped (with the Search Area server
-  and canonical radius limits).
+- Full suite on `leadintel_test` (synthetic data, migrated to 0006): 909 passed, 6 skipped (Search Area server,
+  canonical radius limits and center search).
+- Center search (`tests/test_geo_search.py`, 18 tests, network mocked):
+  - Gazetteer parsing and the Load Data download/reduce step: needs the maintenance lock; keeps the previous file if
+    the download looks empty; never makes a run partial;
+  - one-line geocoder parsing, with malformed and hostile answers dropped; only registered hosts are reachable;
+  - API: business by name (own location; no-location and merged businesses left out); ZIP and city (with a note
+    until the first Load Data); address only when asked, with a Florida retry; failures reported; inside/outside
+    target counties marked; input bounded; hostile text harmless.
+- Center-search walkthrough (real Census Gazetteer subset, address lookup routed in the test), 29 checks at 1920×1080
+  and 1366×768:
+  - ZIP, city, business and street address each set the center;
+  - the radius is kept; outside-county places are marked;
+  - stale result lists are discarded; failures are reported;
+  - Back works; other filters are kept;
+  - no page errors and no CSP violations.
+
+  The 97-check Search Area walkthrough still passes at all three viewports.
 - Search Area (`tests/test_search_area.py`, 112 tests):
   - the boundary is inclusive at 8 bearings, with ±1 m checked;
   - results agree with an independent WGS84 (Vincenty) computation at 0.25–18 mi;
@@ -86,6 +102,9 @@ Updated: 2026-11-06.
 - Everything in the M1 checklist (map under the CSP, Edge app window, F11 / `-Fullscreen`, scaling,
   `test-dataload.ps1`, upgrade keeps data).
 - M2: upgrade to 0006 on a copy of real data, then claim / notes / overview on Windows.
+- M3 Search Area: area panel, marker drag and pick-on-map with the real map tiles, circle, unit switching, Back/Forward.
+  ZIP-code and city search need one Load Data after installing (it downloads about 1.2 MB of Census Gazetteer files
+  from www2.census.gov, a host already used); street addresses use the free Census geocoder on demand.
 
 ## Open security findings
 
@@ -117,7 +136,7 @@ Plan, architecture, acceptance tests and decisions: [research/M3_PREP.md](resear
 
 | Step | What | Migration | State |
 |---|---|---|---|
-| 1 | **Search Area** (core feature, [PLAN.md §14](PLAN.md)): off until enabled, then a 10-mile circle with adjustable center (search, map click, marker drag; panning never moves it) and radius (miles/km); server-side PostGIS geodesic filter on the existing index in the shared `ProspectFilter`, so list, counts, map, export and sales filters agree | none | **server and frontend done** (Area panel and chip, draggable center marker, server circle, slider and number with mi/km, pick-on-map, URL with Back/Forward, stale-response guards); center search next |
+| 1 | **Search Area** (core feature, [PLAN.md §14](PLAN.md)): off until enabled, then a 10-mile circle with adjustable center (search, map click, marker drag; panning never moves it) and radius (miles/km); server-side PostGIS geodesic filter on the existing index in the shared `ProspectFilter`, so list, counts, map, export and sales filters agree | none | **done** (server filter; Area panel and chip, draggable center marker, server circle, slider and number with mi/km, pick-on-map, URL with Back/Forward, stale-response guards; center search by business, ZIP code, city and street address). Windows check pending |
 | 2 | Browser egress proxy (SSRF / DNS rebinding) | none | designed |
 | 3 | Crawl runner (robots, rate limits, isolated contexts, screenshots, maintenance lock) | none | designed |
 | 4 | Measured / heuristic checks and axe-core; fixture-site suite | none | designed |
@@ -137,5 +156,4 @@ Decisions recorded 2026-11-06:
 
 1. Your decision on building the M2 TEST ZIP (the previous M2 TEST ZIP, from `03080b3f`, was deleted before the
    security fix and never distributed).
-2. M3 step 1 (Search Area): center search by business, ZIP code, city and address (Census gazetteer files and the
-   free Census geocoder), separate from the radius filter.
+2. M3 step 2: browser egress proxy (SSRF / DNS rebinding) as the foundation of the crawler, then the crawl runner.

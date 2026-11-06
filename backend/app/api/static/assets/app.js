@@ -812,7 +812,52 @@ function onMapClickForArea(e) {
   moveCenter(e.lngLat.lng, e.lngLat.lat, "Picked on map");
 }
 
+// ---- finding a center: businesses, ZIP codes, cities (local) and street addresses (on Enter, online)
+const FIND_KIND = {business: "Business", zip: "ZIP code", city: "City", address: "Street address"};
+let findSeq = 0, findTimer = null, findResults = [];
+async function runFind(online) {
+  const q = $("#area-find").value.trim(), box = $("#area-results"), seq = ++findSeq;
+  clearTimeout(findTimer);
+  if (q.length < 2) { box.hidden = true; box.innerHTML = ""; return; }
+  box.hidden = false;
+  box.innerHTML = `<p class="note">${online ? "Looking up the address…" : "Searching…"}</p>`;
+  try {
+    const r = await api(`/api/geo/search?${new URLSearchParams({q, online: online ? "true" : "false"})}`);
+    if (seq !== findSeq) return;                              // a newer search superseded this answer
+    findResults = r.results;
+    box.innerHTML = r.results.map((x, i) => `<button type="button" class="area-result" role="option" data-i="${i}">
+        <b>${esc(x.label)}</b><span class="sub">${esc(FIND_KIND[x.kind] || x.kind)} · ${esc(x.precision)}${
+        x.in_target_counties === false ? ' · <span class="warn">outside the counties LeadIntel has data for</span>' : ""}</span></button>`).join("") +
+      r.notes.map(n => `<p class="note">${esc(n)}</p>`).join("") +
+      (!r.results.length && !r.notes.length ? '<p class="note">Nothing found. Try a ZIP code, a city, or press Enter for a street address.</p>' : "");
+  } catch (e) {
+    if (seq !== findSeq) return;
+    box.innerHTML = `<p class="note">Search failed: ${esc(e.message)}</p>`;
+  }
+}
+function useFound(i) {
+  const x = findResults[i]; if (!x) return;
+  const base = state.area || {r: AREA_DEFAULT_M, unit: "mi"};
+  setArea({...base, lat: +x.lat.toFixed(6), lon: +wrapLon(x.lon).toFixed(6), label: x.label}, {fit: true});
+  $("#area-results").hidden = true; ++findSeq;
+  $("#area-find").value = "";
+}
+
 function wireArea() {
+  const find = $("#area-find"), results = $("#area-results");
+  find.addEventListener("input", () => { clearTimeout(findTimer); findTimer = setTimeout(() => runFind(false), 300); });
+  find.addEventListener("keydown", e => {
+    if (e.key === "Enter") { e.preventDefault(); runFind(true); }
+    if (e.key === "Escape") { results.hidden = true; ++findSeq; }
+    if (e.key === "ArrowDown") { results.querySelector(".area-result")?.focus(); e.preventDefault(); }
+  });
+  results.addEventListener("click", e => { const b = e.target.closest(".area-result"); if (b) useFound(+b.dataset.i); });
+  results.addEventListener("keydown", e => {
+    const items = [...results.querySelectorAll(".area-result")], i = items.indexOf(document.activeElement);
+    if (e.key === "ArrowDown" && i < items.length - 1) { items[i + 1].focus(); e.preventDefault(); }
+    if (e.key === "ArrowUp") { (i > 0 ? items[i - 1] : find).focus(); e.preventDefault(); }
+    if (e.key === "Escape") { results.hidden = true; find.focus(); }
+  });
   $("#area-on").addEventListener("click", enableArea);
   $("#area-remove").addEventListener("click", () => setArea(null));
   $("#areachip-x").addEventListener("click", () => setArea(null));

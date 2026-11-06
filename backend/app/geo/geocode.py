@@ -29,6 +29,7 @@ from app.sources.common import download_checked
 
 ZCTA_COUNTY_URL = "https://www2.census.gov/geo/docs/maps-data/data/rel2020/zcta520/tab20_zcta520_county20_natl.txt"
 BATCH_URL = "https://geocoding.geo.census.gov/geocoder/geographies/addressbatch"
+ONELINE_URL = "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress"   # M3 Search Area center search
 log = logging.getLogger(__name__)
 
 
@@ -119,3 +120,32 @@ class CensusGeocoder:
             s.execute(insert(GeocodeCache).on_conflict_do_nothing(index_elements=["address_key"]), rows)
             s.flush()
         return out
+
+
+def geocode_one_line(client: InfraClient, address: str, limit: int = 5, timeout: float = 15.0) -> list[dict]:
+    """One free-text street address -> candidate points (Census one-line geocoder; free, no key).
+
+    Used only when the user asks for an address lookup in the Search Area. Nothing is stored. Every returned
+    coordinate is checked; a malformed answer yields no candidates rather than a wrong point.
+    """
+    import math
+    resp = client.get(ONELINE_URL, params={"address": address[:200], "benchmark": "Public_AR_Current", "format": "json"},
+                      timeout=timeout)
+    raise_for_retryable(resp, retry_404=False)
+    resp.raise_for_status()
+    try:
+        matches = resp.json()["result"]["addressMatches"]
+    except (ValueError, KeyError, TypeError):
+        return []
+    out = []
+    for m in matches if isinstance(matches, list) else []:
+        c = m.get("coordinates") if isinstance(m, dict) else None
+        x, y = (c or {}).get("x"), (c or {}).get("y")
+        if not all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) for v in (x, y)):
+            continue
+        if abs(y) > 85 or abs(x) > 180:
+            continue
+        out.append({"label": str(m.get("matchedAddress") or address)[:200], "lat": float(y), "lon": float(x)})
+        if len(out) >= limit:
+            break
+    return out

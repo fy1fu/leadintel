@@ -230,3 +230,14 @@ dialog h3 { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 
 .area-center-marker:active { cursor: grabbing; }
 .tag.dist { color: var(--fg); }
 @media (max-width: 1280px) { .areachip { max-width: 300px; } }
+.area-find { position: relative; margin-bottom: 8px; }
+.area-find input { width: 100%; background: var(--raised); border: 1px solid var(--line); border-radius: var(--r); padding: 6px 8px; }
+.area-results { margin-top: 4px; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); max-height: 280px; overflow: auto; }
+.area-results[hidden] { display: none; }
+.area-result { display: block; width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--line);
+  padding: 6px 8px; cursor: pointer; font-size: var(--fs-s); }
+.area-result:last-child { border-bottom: 0; }
+.area-result:hover, .area-result:focus { background: var(--raised); }
+.area-result .sub { display: block; color: var(--muted); font-size: var(--fs-xs); }
+.area-result .warn { color: var(--warn); }
+.area-results .note { padding: 6px 8px; color: var(--muted); font-size: var(--fs-xs); margin: 0; }
