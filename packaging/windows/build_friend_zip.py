@@ -39,6 +39,8 @@ SECRET_PATTERNS = [
     re.compile(rb"(?i)password\s*[:=]\s*['\"][^'\"$\s{}]{6,}['\"]"),
 ]
 SECRET_ALLOW = {  # reviewed matches that are not secrets (placeholders/test strings in code)
+    # M2: URL template; $crmPw is read from the DPAPI secret at run time, nothing is embedded in the file.
+    ("app/packaging/windows/common.ps1", b"postgresql+psycopg://${PgCrmUser}:$crmPw@"),
 }
 
 
