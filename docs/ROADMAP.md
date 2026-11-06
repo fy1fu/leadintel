@@ -22,6 +22,9 @@ Status legend:
 | 🆕 **New** | Required by v0.3; not in any earlier design |
 | 🔭 **Optional** | Future enhancement; not on the critical path |
 
+**Update 2026-11-06:** delivery since Phase 1, the next-generation milestones (M1–M3) and the Search Area are in
+§7; new decisions D14–D21 are in §5. Nothing above is replaced.
+
 Where a v0.3 requirement *extends* a planned component, it is listed as 📋 + 🆕 with the delta spelled out. Nothing already designed is redesigned unless a v0.3 requirement or new evidence forces it; those cases are called out in §3.
 
 ---
@@ -302,6 +305,14 @@ All steps must be completed and recorded before `allow_paid` can be set for `goo
 | D11 | St. Johns / Clay BTR availability **does not block Phase 1**; a manual CSV import covers any county (2026-11-03). |
 | D12 | The imported-vs-verified distinction is kept everywhere: UI, exports, scores (LPS verification multipliers), and reports (2026-11-03). |
 | D13 | The evidence cap applies after all positive filing, keyword and recency signals, as the last step of the one scoring pipeline (2026-11-03). |
+| D14 | **Search Area** (adjustable radius) is a core prospecting feature and the first M3 step. It is a filter in the shared `ProspectFilter`, off until enabled, 10 mi default, miles/km; server-side geodesic PostGIS on the existing index; no migration unless proven necessary (2026-11-06). |
+| D15 | Migration **0007** is reserved for M3, used only if M3 needs a schema change. B0.5 (fencing token) is deferred to the next free number (2026-11-06). |
+| D16 | Free **Census API key** approved, configurable and never in source control. No paid services (2026-11-06). |
+| D17 | **SAM.gov** not approved; documented as a possible future source only (2026-11-06). |
+| D18 | **Lighthouse** deferred: no bundled Node.js; the limits of the lighter audit are documented (2026-11-06). |
+| D19 | Email via **`mailto:`** with a copy fallback; no Gmail OAuth or Gmail credentials (2026-11-06). |
+| D20 | CRM writes respect the B0 maintenance lock unless PostgreSQL itself restricts a separate sales login to the CRM tables (verified before use); M2 security review (2026-11-06). |
+| D21 | Every new prospect constraint goes into the shared `ProspectFilter`; constraints combine with AND and are always visible; none silently overrides another (2026-11-06). |
 
 ### Still open
 
@@ -337,3 +348,31 @@ Phase 1 execution plan: [PHASE1.md](PHASE1.md).
 | F9 | **Meaning of industry priority** | Orders work and default sorting only; **never changes BOS/LPS** | Prevents user preference from distorting opportunity scores |
 | F10 | **Fact TTLs (staleness)** | Phone / email / website 90 days; operating status 60 days; registry status from events (daily); manual observations 180 days for scoring (never auto-refreshed) | Drives refresh work and LPS freshness |
 | F11 | **Weights are starting points** | Ship the documented defaults; first calibration uses your labelled sample in Phase 3 | Avoids treating initial numbers as validated |
+
+---
+
+## 7. Delivery since Phase 1 and next-generation roadmap (2026-11-06)
+
+Phases 1–5 above remain the product scope. Since Phase 1, delivery has run in milestones that cut across those
+phases:
+
+| Milestone | Scope | State |
+|---|---|---|
+| M1 | Salesperson interface: shared filter, paging, honest counts, map caption, detail view, exports, themes, Edge app window, security hardening | ✅ accepted (2026-11-06); Windows check pending |
+| M2 | Local CRM: claims, pipeline, notes / contact history, follow-ups, lists / campaigns, overview. Database-restricted write path (D20). Covers part of Phase 4 | ✅ implemented; Windows check pending |
+| M3 | **Search Area (D14)**, then website intelligence: secure crawl, measured checks, WQS with calibration, peer benchmarks, evidence viewer, Census revenue prior, saved searches. Covers Phase 2 website analysis and Phase 3 | 📋 designed (research/M3_PREP.md), next |
+| M4–M6 | Remaining Phase 3–5 scope (competitor analysis, campaigns and outreach via `mailto:`, business performance and outcome learning), sequenced after M3 | 📋 planned |
+
+M3 order (research/M3_PREP.md §8):
+1. Search Area;
+2. browser egress proxy;
+3. crawl runner;
+4. checks and axe-core;
+5. migration 0007;
+6. WQS;
+7. peers and revenue prior;
+8. evidence viewer and `mailto:`;
+9. saved searches and calibration.
+
+The Search Area's design and acceptance tests are in PLAN.md §14.2–14.3. Delivery status:
+[DELIVERY_STATUS.md](DELIVERY_STATUS.md).

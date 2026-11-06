@@ -71,10 +71,34 @@ Updated: 2026-11-06.
 - Push of the local `phase-1` commits (GitHub is at `b20f99a`).
 - Installing an M2 build on the Windows Friend Edition (applies migration 0006 to the real database).
 - Final distributable release ZIP rebuild (only TEST ZIPs are built).
-- B0.5 (fencing token) migration: deferred, will take the next number (0007) if still needed.
+- B0.5 (fencing token) migration: deferred; it takes the next free number after M3's 0007 if still needed.
 - Licensing review before distribution beyond friends (PostGIS GPL, app-local VC++ runtime).
+
+## Next milestone: M3 - search area and website intelligence
+
+Plan, architecture, acceptance tests and decisions: [research/M3_PREP.md](research/M3_PREP.md).
+
+| Step | What | Migration | State |
+|---|---|---|---|
+| 1 | **Search Area** (core feature, [PLAN.md §14](PLAN.md)): off until enabled, then a 10-mile circle with adjustable center (search, map click, marker drag; panning never moves it) and radius (miles/km); server-side PostGIS geodesic filter on the existing index in the shared `ProspectFilter`, so list, counts, map, export and sales filters agree | none | designed; acceptance tests defined (PLAN §14.3, M3_PREP §7.5) |
+| 2 | Browser egress proxy (SSRF / DNS rebinding) | none | designed |
+| 3 | Crawl runner (robots, rate limits, isolated contexts, screenshots, maintenance lock) | none | designed |
+| 4 | Measured / heuristic checks and axe-core; fixture-site suite | none | designed |
+| 5 | Schema: crawl / page / evidence, WQS results, saved searches | `0007` (additive, `leadintel_test` only) | planned |
+| 6 | WQS with confidence; BOS/LPS inputs from measurement; WQS filter | - | planned |
+| 7 | Peer benchmarks; Census revenue prior (approved free key) and revenue filter | - | planned |
+| 8 | Evidence viewer, isolated live-site window, `mailto:` with copy fallback | - | planned |
+| 9 | Saved searches; golden-set labelling and calibration report | - | planned |
+
+Decisions recorded 2026-11-06:
+- 0007 is reserved for M3; B0.5 is deferred.
+- Census key approved (free, kept out of source control); SAM.gov not approved.
+- Lighthouse deferred (no Node.js).
+- Email through `mailto:` only; no Gmail OAuth.
 
 ## Next exact action
 
-Your decision on building the M2 TEST ZIP (the previous M2 TEST ZIP, from `03080b3f`, was deleted before the
-security fix and never distributed). Meanwhile: M3 preparation and research notes.
+1. Your decision on building the M2 TEST ZIP (the previous M2 TEST ZIP, from `03080b3f`, was deleted before the
+   security fix and never distributed).
+2. M3 step 1 (Search Area): implement against the acceptance tests in M3_PREP §7.5, on `leadintel_test` with
+   synthetic data.
