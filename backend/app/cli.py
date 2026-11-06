@@ -19,7 +19,8 @@ EXIT_CODES_HELP = f"""exit codes (business commands):
 
 # Every command is either reading or writing (Phase B0). Writing commands run under the shared maintenance
 # lock; tests/test_write_coverage.py fails if a command is added without being classified here.
-WRITING_COMMANDS = {("db", "upgrade"), ("config", "seed"), ("discover", None), ("score", None), ("import-btr", None)}
+WRITING_COMMANDS = {("db", "upgrade"), ("config", "seed"), ("discover", None), ("score", None), ("import-btr", None),
+                    ("crawl", None)}
 READING_COMMANDS = {("net-check", None), ("db", "status"), ("config", "show"), ("config", "history"),
                     ("report", None), ("export", None), ("wqs-calibration", "export"),
                     ("wqs-calibration", "report")}
@@ -63,6 +64,8 @@ def build_parser() -> argparse.ArgumentParser:
     ex.add_argument("--email", choices=["listed", "none"], help="email listed in a source, or none listed")
     ex.add_argument("--sort", choices=["lps", "bos", "name"], default="lps")
     ex.add_argument("--limit", type=int, default=100000)
+    cr = sub.add_parser("crawl", help="website audit of ONE business (robots.txt, rate limits, egress proxy; no bulk crawling)")
+    cr.add_argument("location_id", type=int, help="the business (location id) whose recorded website is audited")
     wc = sub.add_parser("wqs-calibration", help="WQS calibration: export a labelling sheet or report agreement")
     wc.add_argument("action", choices=["export", "report"])
     wc.add_argument("--out", type=Path, help="export: CSV sheet to write")
@@ -208,6 +211,25 @@ def _business(args) -> int:
         print(json.dumps({"action": out.action, "stored": out.stored, **out.stats, "warnings": out.warnings},
                          indent=2, default=str))
         return 0
+    if args.cmd == "crawl":
+        from app.audit import service as audits
+        from app.db.session import make_engine
+        engine = make_engine(settings)
+        with locked(engine, "website audit"):        # the lock first, like every writing command
+            if not audits.crawler_available():
+                print("leadintel crawl: the crawler component (Playwright) is not installed", file=sys.stderr)
+                return 2
+            try:
+                aid = audits.run_audit_locked(engine, settings.data_dir, args.location_id, audits.default_deps(settings))
+            except audits.AuditUnavailable as exc:
+                print(f"leadintel crawl: {exc}", file=sys.stderr)
+                return 2
+        with engine.connect() as c:
+            d = audits.detail(c, aid)
+        print(json.dumps({"audit_id": aid, "status": d["status"], "reason": d["reason"], "pages": d["pages_crawled"],
+                          "wqs": d["wqs"], "wqs_confidence": d["wqs_confidence"], "wqs_status": d["wqs_status"],
+                          "recommendations": [r["title"] for r in d["recommendations"]]}, indent=2, default=str))
+        return 0 if d["status"] in ("completed", "partial") else 1
     if args.cmd == "wqs-calibration":
         from app.scoring import calibration
         if args.action == "report":

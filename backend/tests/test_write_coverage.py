@@ -46,6 +46,8 @@ def _argv(cmd, tmp_path):
         return [name, str(tmp_path / "out.csv")]
     if name == "net-check":
         return [name, "--no-run", "--no-store"]
+    if name == "crawl":
+        return [name, "1"]
     if name == "wqs-calibration":
         if action == "report":
             labels = tmp_path / "labels.csv"

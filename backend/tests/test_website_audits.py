@@ -506,3 +506,35 @@ def test_saved_search_params_are_validated_like_a_live_search():
         crm._check_saved_params({"near": "30.33,-81.66", "r": "399", "ru": "km"})        # below the canonical minimum
     with pytest.raises(crm.CrmError):
         crm._check_saved_params({"near": "30.33,-81.66", "r": "160935", "ru": "mi"})     # above 100 miles
+
+
+# ---------------------------------------------------------------- the crawl command (step 5) and safe re-runs
+def test_crawl_command_stores_an_audit_under_the_lock(db, tmp_path, good_site, monkeypatch, capsys):
+    import json
+
+    from app import cli
+    lid = _location(db, "CLI Site", url=good_site.origin + "/")
+    monkeypatch.setenv("LEADINTEL_DATABASE_URL", db.url.render_as_string(hide_password=False))
+    monkeypatch.setenv("LEADINTEL_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(service, "default_deps", lambda settings: _deps(tmp_path, {good_site.port}))
+    assert cli.main(["crawl", str(lid)]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == "completed" and out["wqs"] and out["pages"] == 3
+    a = _rows(db, "SELECT status, start_url FROM website_audit WHERE id = :i", i=out["audit_id"])[0]
+    assert a == {"status": "completed", "start_url": good_site.origin + "/"}
+    assert cli.main(["crawl", str(_location(db, "No Site"))]) == 2          # nothing to audit: clear refusal
+
+
+def test_a_failed_rerun_keeps_the_previous_results_and_score(db, tmp_path, good_site):
+    lid = _location(db, "Keeps", url=good_site.origin + "/")
+    first = service.run_audit(db, tmp_path / "data", lid, _deps(tmp_path, {good_site.port}))
+    before = _rows(db, "SELECT id, value FROM score WHERE location_id = :l AND kind = 'wqs' AND superseded_at IS NULL", l=lid)
+    n_findings = len(_rows(db, "SELECT id FROM website_audit_finding WHERE audit_id = :i", i=first))
+    good_site.close()                                                   # the website is now down
+    second = service.run_audit(db, tmp_path / "data", lid, _deps(tmp_path, {good_site.port}))
+    rows = {r["id"]: r for r in _rows(db, "SELECT id, status, wqs FROM website_audit WHERE location_id = :l", l=lid)}
+    assert rows[first]["status"] == "completed" and rows[second]["status"] in ("failed", "robots_unavailable")
+    assert rows[second]["wqs"] is None                                   # unreachable is not "poor"
+    after = _rows(db, "SELECT id, value FROM score WHERE location_id = :l AND kind = 'wqs' AND superseded_at IS NULL", l=lid)
+    assert after == before                                               # the current WQS is untouched
+    assert len(_rows(db, "SELECT id FROM website_audit_finding WHERE audit_id = :i", i=first)) == n_findings

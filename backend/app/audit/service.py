@@ -86,29 +86,37 @@ def run_audit(engine: Engine, data_dir: Path, location_id: int, deps: AuditDeps,
               on_started=None) -> int:
     """Runs one audit end to end under the maintenance lock; returns the audit id."""
     with maintenance_lock(engine, "website audit", data_dir=data_dir):
+        return run_audit_locked(engine, data_dir, location_id, deps, requested_by=requested_by, on_started=on_started)
+
+
+def run_audit_locked(engine: Engine, data_dir: Path, location_id: int, deps: AuditDeps, *,
+                     requested_by: str | None = None, on_started=None) -> int:
+    """The audit itself; the caller holds the maintenance lock (the CLI takes it first, like every writing command).
+    Every run is a new audit row: earlier audits, their evidence and the current WQS stay untouched unless this run
+    produces a new score."""
+    with Session(engine) as s:
+        s.execute(text("UPDATE website_audit SET status = 'interrupted', finished_at = now(), "
+                       "reason = 'LeadIntel stopped while this audit was running' WHERE status = 'running'"))
+        url = start_url_for(s.connection(), location_id)
+        if url is None:
+            raise AuditUnavailable("no website is recorded for this business")
+        audit = WebsiteAudit(location_id=location_id, status="running", start_url=url, requested_by=requested_by)
+        s.add(audit)
+        s.commit()
+        audit_id = audit.id
+    if on_started:
+        on_started(audit_id)
+    try:
+        _crawl_and_store(engine, data_dir, audit_id, location_id, url, deps)
+    except Exception as exc:
         with Session(engine) as s:
-            s.execute(text("UPDATE website_audit SET status = 'interrupted', finished_at = now(), "
-                           "reason = 'LeadIntel stopped while this audit was running' WHERE status = 'running'"))
-            url = start_url_for(s.connection(), location_id)
-            if url is None:
-                raise AuditUnavailable("no website is recorded for this business")
-            audit = WebsiteAudit(location_id=location_id, status="running", start_url=url, requested_by=requested_by)
-            s.add(audit)
+            s.execute(text("UPDATE website_audit SET status = 'failed', finished_at = now(), reason = :r "
+                           "WHERE id = :i AND status = 'running'"),
+                      {"i": audit_id, "r": str(exc) if isinstance(exc, AuditUnavailable)
+                       else f"the audit stopped unexpectedly ({type(exc).__name__})"})
             s.commit()
-            audit_id = audit.id
-        if on_started:
-            on_started(audit_id)
-        try:
-            _crawl_and_store(engine, data_dir, audit_id, location_id, url, deps)
-        except Exception as exc:
-            with Session(engine) as s:
-                s.execute(text("UPDATE website_audit SET status = 'failed', finished_at = now(), reason = :r "
-                               "WHERE id = :i AND status = 'running'"),
-                          {"i": audit_id, "r": str(exc) if isinstance(exc, AuditUnavailable)
-                           else f"the audit stopped unexpectedly ({type(exc).__name__})"})
-                s.commit()
-            raise
-        return audit_id
+        raise
+    return audit_id
 
 
 def _crawl_and_store(engine, data_dir, audit_id, location_id, url, deps: AuditDeps) -> None:
