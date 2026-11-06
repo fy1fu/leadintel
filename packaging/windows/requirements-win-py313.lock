@@ -1,5 +1,6 @@
 # Exact Windows (cp313, win_amd64) wheels for LeadIntel's runtime dependencies.
-# Versions match the environment the B0 test suite passed on. Install with:
+# Versions match the environment the B0 test suite passed on. M3: playwright, greenlet and pyee run website audits
+# with the installed Microsoft Edge (no browser download). Install with:
 #   python -m pip install --only-binary=:all: --require-hashes -r requirements-win-py313.lock
 alembic==1.20.1 \
     --hash=sha256:9970712cfb81ea26c8658d378aaa5b8f6ff9146e5bb111d70497c164016cf598
@@ -23,6 +24,8 @@ fastapi==0.162.0 \
     --hash=sha256:3785963de305dd09912426cb81f2d230fce98ab3521cdfe97265c8d14983128c
 geoalchemy2==0.20.0 \
     --hash=sha256:1489a1d106519542a79c97cd0b4c537d80462c353610ebc2429cf2c43daac717
+greenlet==3.5.6 \
+    --hash=sha256:5b602b4201b965a8354d74e232364a66ff243dd142e350d035f46169bb36e13d
 h11==0.16.0 \
     --hash=sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86
 httpcore==1.0.9 \
@@ -47,6 +50,8 @@ paramiko==5.1.0 \
     --hash=sha256:d9fe6d67a9d0bbf3eb85b051d26ab850b678c02d060f32915b944e5ca6d0d9e1
 phonenumbers==9.0.42 \
     --hash=sha256:321c92d9734bfb4adc64575f940da26463f09fc79ac692b43a35f9306e4ecc7d
+playwright==1.63.0 \
+    --hash=sha256:2f9a707a6c6c91157ed77bff2b8caeb04b3c8d46e70d585fc134298cbe4b5cc6
 probableparsing==0.0.1 \
     --hash=sha256:509df25fdda4fd7c0b2a100f58cc971bd23daf26f3b3320aebf2616d2e10c69e
 psycopg==3.3.6 \
@@ -63,6 +68,8 @@ pydantic-core==2.50.2 \
     --hash=sha256:e5c801bdf3cc92274b8fc2c7023c8751e5ae81260c009ac558ff55ce712a2d45
 pynacl==1.6.2 \
     --hash=sha256:62985f233210dee6548c223301b6c25440852e13d59a8b81490203c3227c5ba0
+pyee==13.0.1 \
+    --hash=sha256:af2f8fede4171ef667dfded53f96e2ed0d6e6bd7ee3bb46437f77e3b57689228
 pyshp==3.1.6 \
     --hash=sha256:be8cd9436dcbde477c63ea789f7dcdea3af19f17ea84f2744bfc12efe9145d1e
 python-crfsuite==0.9.12 \

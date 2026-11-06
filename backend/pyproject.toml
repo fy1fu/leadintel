@@ -26,8 +26,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.3", "pytest-timeout>=2.3", "hypothesis>=6.100"]
-# M3 website crawler (app/crawl): Apache-2.0. Pinned to the version tested with its browser build; not yet part of
-# the Windows Friend Edition lock (added when the crawler runs inside Load Data and has been checked on Windows).
+# M3 website audits (app/crawl): Apache-2.0. Pinned to the version tested with its browser build. Also in the Windows
+# lock (packaging/windows/requirements-win-py313.lock), where audits drive the installed Microsoft Edge.
 crawl = ["playwright==1.63.0"]
 
 [project.scripts]
