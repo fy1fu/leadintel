@@ -49,7 +49,7 @@ GOOD = {
       <meta name="viewport" content="width=device-width"></head><body><h1>Contact</h1>
       <form><label for="n">Name</label><input id="n" name="n"><label>Message <textarea name="m"></textarea></label>
       <button>Send</button></form></body></html>""",
-    "/about": html("About Acme", "<h1>About</h1><p>Since 1999.</p>"),
+    "/about": '<!doctype html><html lang="en"><head><title>About Acme</title></head><body><h1>About</h1><p>Since 1999.</p></body></html>',
 }
 BAD = {
     "/": """<!doctype html><html><head><title>Home</title><meta name="generator" content="WordPress 4.9.8">
@@ -64,12 +64,16 @@ GOOD_EXPECT = {"https": False, "no_mixed_content": None, "viewport_meta": True, 
                "titles_present": True, "titles_unique": True, "meta_description": True, "single_h1": True,
                "business_structured_data": True, "click_to_call": True, "contact_form_or_email": True,
                "enough_text": True, "image_alt_text": True, "page_language": True, "form_labels": True,
-               "jquery_current": None, "cms_current": None, "modern_layout": True, "recent_copyright_year": True}
+               "jquery_current": None, "cms_current": None, "modern_layout": True, "recent_copyright_year": True,
+               "visual_design": None, "page_weight": True, "largest_content_paint": True, "load_time": True,
+               "working_links": True, "accessibility_rules": True, "more_than_one_page": True}
 BAD_EXPECT = {"https": False, "no_mixed_content": None, "viewport_meta": False, "no_horizontal_scroll_on_phone": False,
               "titles_present": True, "titles_unique": False, "meta_description": False, "single_h1": False,
               "business_structured_data": False, "click_to_call": False, "contact_form_or_email": True,
               "enough_text": False, "image_alt_text": False, "page_language": False, "form_labels": False,
-              "jquery_current": False, "cms_current": False, "modern_layout": False, "recent_copyright_year": False}
+              "jquery_current": False, "cms_current": False, "modern_layout": False, "recent_copyright_year": False,
+              "visual_design": None, "page_weight": True, "largest_content_paint": True, "load_time": True,
+              "working_links": True, "accessibility_rules": False, "more_than_one_page": True}
 
 
 @pytest.fixture
