@@ -26,6 +26,7 @@ from pathlib import Path
 from urllib.parse import urldefrag, urljoin, urlsplit
 from urllib.robotparser import RobotFileParser
 
+from app.crawl.checks import FACTS_JS, Criterion, evaluate_site
 from app.db.locks import LockLost, UnlockedWrite, ensure_write_allowed
 from app.net.browser_proxy import BrowserEgressProxy
 from app.net.safe_egress import BlockedDestination, SafeFetcher
@@ -64,6 +65,7 @@ class PageResult:
     screenshot_mobile: str | None = None
     blocked_reason: str | None = None
     error: str | None = None
+    facts: dict | None = None                  # app.crawl.checks.FACTS_JS result (read-only DOM facts)
 
 
 @dataclass
@@ -77,6 +79,12 @@ class CrawlResult:
     skipped: list[tuple[str, str]] = field(default_factory=list)
     started_at: float = 0.0
     finished_at: float = 0.0
+    mobile_home_facts: dict | None = None      # the home page measured at phone width
+
+    def criteria(self, today=None) -> list[Criterion]:
+        """Website-check criteria from the pages that loaded (none when nothing could be crawled)."""
+        facts = [p.facts for p in self.pages if p.facts]
+        return evaluate_site(facts, self.mobile_home_facts, today=today) if facts else []
 
 
 def _norm(url: str) -> str:
@@ -222,14 +230,18 @@ class SiteCrawler:
                 return pr, []
             pr.title = (page.title() or "")[:300]
             pr.text_sha256 = hashlib.sha256(" ".join(body_text.split()).encode()).hexdigest()
+            pr.facts = page.evaluate(FACTS_JS)
             if pr.final_url and _same_site(pr.final_url, res.start_url):
                 links = page.eval_on_selector_all("a[href]", "els => els.map(e => e.href)")[:500]
             pr.links = len(links)
             if self.limits.screenshots:
                 pr.screenshot_desktop = self._save(site_dir, f"page-{len(res.pages) + 1:02d}-desktop.jpg",
                                                    page.screenshot(type="jpeg", quality=70))
-                if first:
-                    page.set_viewport_size({"width": self.limits.mobile[0], "height": self.limits.mobile[1]})
+            if first and pr.final_url and _same_site(pr.final_url, res.start_url):
+                page.set_viewport_size({"width": self.limits.mobile[0], "height": self.limits.mobile[1]})
+                page.wait_for_timeout(150)                       # let the layout settle at phone width
+                res.mobile_home_facts = page.evaluate(FACTS_JS)
+                if self.limits.screenshots:
                     pr.screenshot_mobile = self._save(site_dir, f"page-{len(res.pages) + 1:02d}-mobile.jpg",
                                                       page.screenshot(type="jpeg", quality=70))
         except (UnlockedWrite, LockLost):
