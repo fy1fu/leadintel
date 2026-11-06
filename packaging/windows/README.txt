@@ -33,8 +33,10 @@ about 4 GB of free disk space. No administrator rights are needed.
 2. START
 --------
 Double-click "LeadIntel" on the Desktop (or Start menu > LeadIntel > LeadIntel).
-A window opens, then your browser opens LeadIntel at http://127.0.0.1:8765/ (only this computer can reach it).
-Keep that window open while you use LeadIntel.
+LeadIntel opens in its own window (Microsoft Edge in app mode, maximized); only this computer can reach it.
+Full screen: press F11 or click the full-screen button at the top right; Esc or F11 leaves full screen.
+If Edge is not available, LeadIntel opens in your default browser instead.
+Keep the small LeadIntel window that also opens: it runs LeadIntel (Ctrl+C there stops it).
 
 
 3. UPDATE DATA (Load Data)
@@ -100,6 +102,7 @@ running:
     pgdata\                        your database (never replaced by updates)
     data\                          downloaded public data (never replaced by updates)
     secrets\                       encrypted passwords (only your Windows account can read them)
+    edge-profile\                  LeadIntel's own app-window settings (kept apart from your normal browsing)
     backups\                       database backups taken before updates
     logs\                          setup and database logs - useful if something goes wrong
 

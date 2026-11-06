@@ -69,6 +69,14 @@ Save-PlainSecret 'sunbiz_user' 'OtherUser'; Save-PlainSecret 'sunbiz_password' '
 $login = Get-SunbizLogin
 Assert 'sunbiz: a saved login overrides the built-in one' ($login.User -eq 'OtherUser' -and $login.Source -eq 'saved')
 
+# ---- app window command line (no window is opened) ----
+$ea = Get-EdgeArguments 'http://127.0.0.1:8765/'
+Assert 'edge: app mode, own profile, maximized by default' (($ea -contains '--app=http://127.0.0.1:8765/') -and
+    (($ea | Where-Object { $_ -like '--user-data-dir=*edge-profile*' }).Count -eq 1) -and ($ea -contains '--start-maximized') -and
+    -not ($ea -contains '--start-fullscreen'))
+$ef = Get-EdgeArguments 'http://127.0.0.1:8765/' -Fullscreen
+Assert 'edge: -Fullscreen asks for full screen instead of maximized' (($ef -contains '--start-fullscreen') -and -not ($ef -contains '--start-maximized'))
+
 # ---- simulated discover runs through the real Invoke-DataLoad / Show-DataLoadResult ----
 $hostExe = (Get-Process -Id $PID).Path
 $partialJson = '{"run_id": 2, "status": "partial", "counts": {}, "coverage": [' +

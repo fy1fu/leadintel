@@ -1,6 +1,9 @@
-# LeadIntel Friend Edition - start LeadIntel and open it in the browser. Press Ctrl+C in this window to stop it.
+# LeadIntel Friend Edition - start LeadIntel and open it in its own app window. Press Ctrl+C in this window to stop it.
+#   -Fullscreen  open the app window full screen (--start-fullscreen; under test, see docs/DELIVERY_STATUS.md)
+#   -Browser     use the default browser instead of an Edge app window
 # If LeadIntel is already running, this only opens the browser at the running server: it starts no second
 # server, keeps run.json, and leaves the database and the running server alone.
+param([switch]$Fullscreen, [switch]$Browser)
 . (Join-Path $PSScriptRoot 'common.ps1')
 
 $server = $null
@@ -16,7 +19,7 @@ try {
         if ($alive) {
             $secondLaunch = $true
             Write-Host "LeadIntel is already running; opening http://127.0.0.1:$($run.port)/"
-            Start-Process "http://127.0.0.1:$($run.port)/"
+            $null = Open-LeadIntelWindow "http://127.0.0.1:$($run.port)/" -Fullscreen:$Fullscreen -Browser:$Browser
             Start-Sleep -Seconds 3
             return
         }
@@ -44,7 +47,8 @@ try {
 
     Write-Host "`nLeadIntel is running at $url" -ForegroundColor Green
     Write-Host 'Keep this window open while you use LeadIntel. Press Ctrl+C here to stop LeadIntel and its database.'
-    Start-Process $url
+    $how = Open-LeadIntelWindow $url -Fullscreen:$Fullscreen -Browser:$Browser
+    if ($how -eq 'edge-app') { Write-Host 'Opened in its own window. Full screen: F11 or the full-screen button; Esc or F11 to leave.' }
     # Retry an incomplete load, or refresh week-old data, without the salesperson having to do anything. Runs in its
     # own minimized window; the database lock makes a second load at the same time impossible.
     $why = Get-DataRefreshReason $state (Get-Date)

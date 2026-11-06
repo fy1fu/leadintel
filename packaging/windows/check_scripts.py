@@ -42,7 +42,7 @@ launch = (HERE / "launch.ps1").read_text()
 alive = block_after(launch, r"if \(\$alive\) ")
 check("already-running branch sets the second-launch flag", "$secondLaunch = $true" in alive)
 check("already-running branch opens the browser and leaves with return (finally still runs)",
-      "Start-Process \"http://127.0.0.1:$($run.port)/\"" in alive and re.search(r"\breturn\b", alive) is not None)
+      "Open-LeadIntelWindow \"http://127.0.0.1:$($run.port)/\"" in alive and re.search(r"\breturn\b", alive) is not None)
 check("already-running branch has no exit, no server start, no database start, no run.json removal",
       not re.search(r"\bexit\b|Start-Pg|uvicorn|Remove-Item", alive))
 check("no 'exit' anywhere in launch.ps1 (exit would bypass the second-launch logic)", not re.search(r"(?m)^\s*exit\b|[;{]\s*exit\b", launch))
@@ -137,6 +137,21 @@ check("launcher starts a background update only when one is due and no load is a
 check("background update starts only after the server answered (inside the normal launch path)",
       launch2.index("$secondLaunch = $true") < launch2.index("Get-DataRefreshReason") and launch2.index("$ready = $true") < launch2.index("Get-DataRefreshReason"))
 check("Load Data -Auto never waits for a key", "if ($Auto) {" in load2 and re.search(r"else \{ Write-Host 'Press Enter to close.'; \[void\]\(Read-Host\) \}", load2))
+
+# ---- app window (M1 S8) ----
+owin = block_after(common2, r"function Open-LeadIntelWindow\(")
+check("app window never simulates keystrokes",
+      not any(re.search(r"(?i)SendKeys|keybd_event|SendInput|wscript\.shell.*sendkeys", f.read_text()) for f in HERE.glob("*.ps1")))
+check("app window falls back to the default browser (Edge missing or no window within 15 s)",
+      owin.rstrip().endswith("return 'browser'") and "Start-Process $url" in owin and "Find-Edge" in owin and "-lt 30" in owin)
+eargs = block_after(common2, r"function Get-EdgeArguments\(")
+check("Edge runs in app mode with LeadIntel's own profile; maximized by default, full screen only when asked",
+      "--app=$url" in eargs and "edge-profile" in eargs and "--start-maximized" in eargs
+      and "if ($Fullscreen) { $a += '--start-fullscreen' }" in eargs)
+check("launcher passes -Fullscreen/-Browser through and opens the window after the server answered",
+      "param([switch]$Fullscreen, [switch]$Browser)" in launch2
+      and launch2.index("$ready = $true") < launch2.index("$how = Open-LeadIntelWindow $url"))
+check("setup never removes the Edge profile folder", "edge-profile" not in setup)
 
 # ---- automatic initial data load (Friend Edition 1.0.0) ----
 common = (HERE / "common.ps1").read_text()

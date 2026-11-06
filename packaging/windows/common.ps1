@@ -420,3 +420,47 @@ function Get-DataRefreshReason([hashtable]$state, [datetime]$now) {
     if (-not $age -or $age.TotalDays -ge 7) { return 'the data is more than a week old' }
     return $null
 }
+
+# ---------- app window (Microsoft Edge app mode, with the default browser as fallback) ----------
+function Find-Edge {
+    # Edge ships with Windows 10/11; look it up the documented way (App Paths), then the usual install folders.
+    foreach ($key in 'HKCU:\Software\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe',
+                     'HKLM:\Software\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe') {
+        try { $p = (Get-ItemProperty -LiteralPath $key -ErrorAction Stop).'(default)'; if ($p -and (Test-Path $p)) { return $p } } catch { }
+    }
+    $candidates = @()
+    foreach ($base in @(${env:ProgramFiles(x86)}, $env:ProgramFiles, $env:LOCALAPPDATA)) {
+        if ($base) { $candidates += (Join-Path $base 'Microsoft\Edge\Application\msedge.exe') }
+    }
+    foreach ($c in $candidates) { if (Test-Path $c) { return $c } }
+    return $null
+}
+function Get-EdgeArguments([string]$url, [switch]$Fullscreen) {
+    # Pure function (tested): the Edge command line for LeadIntel's app window.
+    # Own profile folder: keeps LeadIntel's browser storage apart from the user's browsing, and makes Edge open a
+    # separate app window instead of handing the request to an already-running Edge.
+    $profileDir = Join-Path $LI.Root 'edge-profile'
+    $a = @("--app=$url", "--user-data-dir=`"$profileDir`"", '--no-first-run', '--no-default-browser-check')
+    if ($Fullscreen) { $a += '--start-fullscreen' } else { $a += '--start-maximized' }
+    return ,$a
+}
+function Open-LeadIntelWindow([string]$url, [switch]$Fullscreen, [switch]$Browser) {
+    # Opens LeadIntel as an app window. Returns 'edge-app' or 'browser'. Never sends keystrokes.
+    if (-not $Browser) {
+        $edge = Find-Edge
+        if ($edge) {
+            Start-Process -FilePath $edge -ArgumentList (Get-EdgeArguments $url -Fullscreen:$Fullscreen) | Out-Null
+            for ($i = 0; $i -lt 30; $i++) {          # up to 15 seconds for the app window to appear
+                Start-Sleep -Milliseconds 500
+                $win = @(Get-Process msedge -ErrorAction SilentlyContinue |
+                         Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -like '*LeadIntel*' })
+                if ($win.Count -gt 0) { return 'edge-app' }
+            }
+            Write-Host 'The LeadIntel app window did not appear; opening your default browser instead.' -ForegroundColor Yellow
+        } else {
+            Write-Host 'Microsoft Edge was not found; opening LeadIntel in your default browser.' -ForegroundColor Yellow
+        }
+    }
+    Start-Process $url
+    return 'browser'
+}

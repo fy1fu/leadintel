@@ -3,14 +3,17 @@
 Local business acquisition & website-opportunity intelligence platform: discovers local businesses,
 evaluates their web presence against industry-specific benchmarks, and ranks them as website-development prospects.
 
-Status: planning (free-first architecture, v0.2). See [docs/PLAN.md](docs/PLAN.md) for research, cost inventory, architecture and phased roadmap.
+Status: Phase 1 discovery, provisional BOS/LPS scoring and the salesperson interface are built; website analysis (WQS),
+CRM and team features are planned. Progress: [docs/DELIVERY_STATUS.md](docs/DELIVERY_STATUS.md). Research, cost
+inventory and the long-term roadmap: [docs/PLAN.md](docs/PLAN.md).
 
-Planned layout:
+Layout (as built):
 
 ```
-backend/    FastAPI + PostGIS + Procrastinate workers (discovery, crawl, analysis, scoring)
-frontend/   React + Vite + TypeScript + Tailwind, interactive map
-docs/       plan, scoring methodology, data-source notes
+backend/             FastAPI + SQLAlchemy + PostgreSQL/PostGIS; discovery, scoring and the API run in-process (no worker queue)
+backend/app/api/static/   the web interface: plain HTML/CSS/JavaScript, MapLibre map (no build step)
+packaging/windows/   Friend Edition: per-user Windows installer, launcher, data loading, ZIP builder
+docs/                plan, scoring methodology, data-source notes, verification records
 ```
 
 ## Backend quick start
