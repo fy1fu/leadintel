@@ -31,7 +31,26 @@ Updated: 2026-11-06.
 
 ## Test results (latest)
 
-- Full suite on `leadintel_test` (synthetic data, migrated to 0006): 779 passed, 6 skipped (after the security fix).
+- Full suite on `leadintel_test` (synthetic data, migrated to 0006): 879 passed, 6 skipped (with the Search Area server).
+- Search Area (`tests/test_search_area.py`, 97 tests):
+  - the boundary is inclusive at 8 bearings, with ±1 m checked;
+  - results agree with an independent WGS84 (Vincenty) computation at 0.25–18 mi;
+  - miles and kilometres give identical results;
+  - list, count, summary, map points and CSV agree under 11 filter combinations;
+  - an area never widens a filter, and clearing it restores the previous result exactly;
+  - distance column and sort, approximate-location flag and precise-only;
+  - sales filters combined with the area;
+  - the box prefilter loses nothing at 25–60° latitude and 100 mi;
+  - 16 kinds of invalid input are refused on 4 endpoints;
+  - the circle endpoint matches the geodesic radius within 0.1 %.
+- Search Area performance (100k synthetic locations, about 4× realistic density; rolled back). Every area query
+  uses the GiST index:
+  - 5 mi: 8–56 ms;
+  - 10 mi: 22–152 ms;
+  - 15 mi (about 39k matches): 49–230 ms, within the 250 ms target;
+  - 25 mi (80k matches, 88 % of all data): count 0.5 s, page 1 about 1.1 s. This is a measured planner limit:
+    there are no statistics for the geography expression. The fix, if real data needs it, is a GiST index on
+    `geom::geography` (an additive migration). Not added now (no unnecessary migration).
 - CRM security (`tests/test_crm_security.py`): 31 attacks refused by PostgreSQL with no application check and again
   through the application; 10 kinds of tampering each force the maintenance-lock mode; Load Data / upgrade
   interplay; the real `db upgrade` command sets exactly the CRM privileges.
@@ -80,7 +99,7 @@ Plan, architecture, acceptance tests and decisions: [research/M3_PREP.md](resear
 
 | Step | What | Migration | State |
 |---|---|---|---|
-| 1 | **Search Area** (core feature, [PLAN.md §14](PLAN.md)): off until enabled, then a 10-mile circle with adjustable center (search, map click, marker drag; panning never moves it) and radius (miles/km); server-side PostGIS geodesic filter on the existing index in the shared `ProspectFilter`, so list, counts, map, export and sales filters agree | none | designed; acceptance tests defined (PLAN §14.3, M3_PREP §7.5) |
+| 1 | **Search Area** (core feature, [PLAN.md §14](PLAN.md)): off until enabled, then a 10-mile circle with adjustable center (search, map click, marker drag; panning never moves it) and radius (miles/km); server-side PostGIS geodesic filter on the existing index in the shared `ProspectFilter`, so list, counts, map, export and sales filters agree | none | **server done** (filter, validation, distance and sort, exclusion count, export columns, circle endpoint); frontend next |
 | 2 | Browser egress proxy (SSRF / DNS rebinding) | none | designed |
 | 3 | Crawl runner (robots, rate limits, isolated contexts, screenshots, maintenance lock) | none | designed |
 | 4 | Measured / heuristic checks and axe-core; fixture-site suite | none | designed |
@@ -100,5 +119,10 @@ Decisions recorded 2026-11-06:
 
 1. Your decision on building the M2 TEST ZIP (the previous M2 TEST ZIP, from `03080b3f`, was deleted before the
    security fix and never distributed).
-2. M3 step 1 (Search Area): implement against the acceptance tests in M3_PREP §7.5, on `leadintel_test` with
-   synthetic data.
+2. M3 step 1 (Search Area), frontend:
+   - Area panel and chip; center by business search or by map;
+   - draggable marker; slider and number field with mi/km;
+   - circle from `/api/geo/circle`; URL state;
+   - headless walkthrough.
+
+   Then the center search for addresses, ZIP codes and cities (Census gazetteer files and geocoder).

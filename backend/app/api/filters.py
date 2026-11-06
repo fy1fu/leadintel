@@ -18,17 +18,30 @@ Meanings are deliberately literal:
   API sets from the local profile. ``sales=new`` includes businesses nobody has touched yet (no CRM row).
   Follow-up periods use the database server's clock (the same machine in the Friend Edition):
   ``overdue`` before today, ``today``, ``week`` today through the next 6 days, ``any`` / ``none`` set or not.
+* search area (M3, PLAN.md §14.2): a circle given by center and radius. Inside means geodesic distance on the WGS84
+  spheroid <= radius (boundary INCLUSIVE, with a 1 cm tolerance for floating-point rounding). Businesses without coordinates are never inside (they are counted
+  separately). The area combines with every other filter by AND, like all of them.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import math
+from dataclasses import dataclass, field, replace
 
 from app.normalize.core import name_norm
 
 WEBSITE_STATUSES = ("listed", "social_only", "none_recorded", "unknown")
 OPERATING_STATUSES = ("open", "closed", "unknown")
 QUALIFICATIONS = ("provisionally_qualified", "needs_research", "not_qualified", "unscored")
-SORTS = ("lps", "bos", "name", "follow_up")
+SORTS = ("lps", "bos", "name", "follow_up", "distance")
+# Search area: units and limits (PLAN.md §14.2). Exact conversion factors; the radius is handled in metres.
+UNIT_M = {"mi": 1609.344, "km": 1000.0, "m": 1.0}
+AREA_UNITS = ("mi", "km")         # what users and the API may use; metres are internal only
+AREA_MIN_M = 400.0                 # 0.25 mi (402 m) and 0.4 km both satisfy this; anything smaller is refused
+AREA_MAX_M = 100 * 1609.344        # 100 mi = 160,934.4 m (also covers 160 km)
+AREA_MAX_ABS_LAT = 85.0
+# Inclusive boundary: a business exactly on the circle is inside. ST_Distance and ST_DWithin (and a radius converted
+# from mi/km) can differ by floating-point noise, so 1 cm is added; stored coordinates are only ~1 cm precise anyway.
+AREA_EDGE_TOLERANCE_M = 0.01
 SALES_STATUSES = ("new", "researching", "contacted", "follow_up", "interested", "meeting", "proposal", "won", "lost",
                   "not_a_fit")   # same values as app.db.models.CRM_STATUSES (checked by a test)
 CLAIM_FILTERS = ("mine", "others", "unclaimed", "claimed")
@@ -93,7 +106,34 @@ ORDER_SQL = {
     "bos": "b.value DESC NULLS LAST, l.id",
     "name": "lower(l.display_name), l.id",
     "follow_up": "cp.follow_up_at ASC NULLS LAST, p.value DESC NULLS LAST, l.id",
+    "distance": "ST_Distance(l.geom::geography, ST_SetSRID(ST_MakePoint(:a_lon, :a_lat), 4326)::geography), l.id",
 }
+_CENTER = "ST_SetSRID(ST_MakePoint(:a_lon, :a_lat), 4326)"
+DISTANCE_SQL = f"ST_Distance(l.geom::geography, {_CENTER}::geography)"
+# Coordinates that came only from a ZIP-level geocode of the operating address (none are produced today: a ZIP-only
+# geocode yields no coordinates, so such businesses are excluded from areas and counted).
+APPROXIMATE_SQL = ("EXISTS (SELECT 1 FROM address ad WHERE ad.owner_type = 'location' AND ad.owner_id = l.id "
+                   "AND ad.is_operating_location AND ad.geocode_method = 'zip_centroid')")
+
+
+def radius_to_m(value: float, unit: str) -> float:
+    if unit not in AREA_UNITS:
+        raise FilterError(f"unit: unknown value {unit!r}; allowed: {list(AREA_UNITS)}")
+    if value is None or not math.isfinite(value):
+        raise FilterError("radius must be a finite number")
+    return float(value) * UNIT_M[unit]
+
+
+def area_envelope(lat: float, lon: float, radius_m: float) -> tuple[float, float, float, float]:
+    """A lon/lat box that certainly contains the geodesic circle (used only as an index prefilter).
+
+    Latitude: the shortest meridian degree on WGS84 is 110,574 m (at the equator). Longitude: a parallel degree is
+    at least 111,320 m * cos(lat) on WGS84, evaluated at the box's highest absolute latitude. 1 % margin on top.
+    """
+    dlat = radius_m / 110_574.0 * 1.01
+    far = min(89.0, abs(lat) + dlat)
+    dlon = radius_m / (111_320.0 * math.cos(math.radians(far))) * 1.01
+    return lon - dlon, lat - dlat, lon + dlon, lat + dlat
 
 
 class FilterError(ValueError):
@@ -146,6 +186,10 @@ class ProspectFilter:
     claim: str | None = None                               # mine / others / unclaimed / claimed
     follow_up: str | None = None                           # overdue / today / week / any / none
     list_id: int | None = None                             # saved list or campaign
+    near_lat: float | None = None                          # M3 search area: center latitude (WGS84)
+    near_lon: float | None = None                          # center longitude
+    radius_m: float | None = None                          # radius in metres (converted from mi/km by the API)
+    precise_only: bool = False                             # area: leave out approximate (ZIP-level) coordinates
     crm: bool = False                                      # internal: the CRM tables exist
     crm_org: str | None = None                             # internal: local organization id (None before setup)
     crm_user: str | None = None                            # internal: local user id
@@ -164,6 +208,7 @@ class ProspectFilter:
         if not self.crm and (self.sales or self.claim or self.follow_up or self.list_id is not None
                              or self.sort == "follow_up"):
             raise FilterError("the sales filters need a database upgrade (run Setup again)")
+        self._check_area()
         for name in ("bos_min", "bos_max", "lps_min", "lps_max"):
             setattr(self, name, _score(getattr(self, name), name))
         for lo, hi in (("bos_min", "bos_max"), ("lps_min", "lps_max")):
@@ -173,6 +218,37 @@ class ProspectFilter:
             self.q = self.q.strip() or None
             if self.q and len(self.q) > 200:
                 raise FilterError("q is longer than 200 characters")
+
+    @property
+    def area(self) -> bool:
+        return self.radius_m is not None
+
+    def _check_area(self) -> None:
+        given = [v is not None for v in (self.near_lat, self.near_lon, self.radius_m)]
+        if any(given) and not all(given):
+            raise FilterError("a search area needs a center (latitude and longitude) and a radius")
+        if not any(given):
+            if self.sort == "distance":
+                raise FilterError("sort=distance needs a search area")
+            if self.precise_only:
+                raise FilterError("precise_only applies only to a search area")
+            return
+        for name in ("near_lat", "near_lon", "radius_m"):
+            v = getattr(self, name)
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+                raise FilterError(f"{name} must be a finite number")
+            setattr(self, name, float(v))
+        if abs(self.near_lat) > AREA_MAX_ABS_LAT:
+            raise FilterError(f"near_lat must be between -{AREA_MAX_ABS_LAT:g} and {AREA_MAX_ABS_LAT:g}")
+        if abs(self.near_lon) > 180:
+            raise FilterError("near_lon must be between -180 and 180")
+        if not AREA_MIN_M <= self.radius_m <= AREA_MAX_M + 1e-6:
+            raise FilterError(f"radius must be between 0.25 and 100 miles ({AREA_MIN_M:g}-{AREA_MAX_M:g} m)")
+
+    def without_area(self) -> "ProspectFilter":
+        """The same filter with the area removed (to count matches the area leaves out for lack of coordinates)."""
+        return replace(self, near_lat=None, near_lon=None, radius_m=None, precise_only=False,
+                       sort="lps" if self.sort == "distance" else self.sort)
 
     def where(self) -> tuple[str, dict]:
         """WHERE clause (without the keyword) and its bound parameters."""
@@ -219,6 +295,15 @@ class ProspectFilter:
             if getattr(self, hi) is not None:
                 conds.append(f"{col} <= :f_{hi}")
                 params[f"f_{hi}"] = getattr(self, hi)
+        if self.area:
+            xmin, ymin, xmax, ymax = area_envelope(self.near_lat, self.near_lon, self.radius_m + AREA_EDGE_TOLERANCE_M)
+            # 1) index-backed box prefilter on the geometry (GiST idx_location_geom); 2) exact geodesic test, inclusive
+            conds.append("l.geom IS NOT NULL AND l.geom && ST_MakeEnvelope(:a_xmin, :a_ymin, :a_xmax, :a_ymax, 4326) "
+                         f"AND ST_DWithin(l.geom::geography, {_CENTER}::geography, :a_r)")
+            params.update(a_lat=self.near_lat, a_lon=self.near_lon, a_r=self.radius_m + AREA_EDGE_TOLERANCE_M,
+                          a_xmin=xmin, a_ymin=ymin, a_xmax=xmax, a_ymax=ymax)
+            if self.precise_only:
+                conds.append(f"NOT {APPROXIMATE_SQL}")
         if self.crm:
             params.update(crm_org=self.crm_org, crm_user=self.crm_user)   # None before setup: nothing is joined
             if self.sales:
@@ -262,6 +347,10 @@ CRM_LIST_COLUMNS = """,
   coalesce(cp.owner_user_id = CAST(:crm_user AS uuid), false) AS owned_by_me,
   (SELECT ou.initials FROM crm_user ou WHERE ou.id = cp.owner_user_id) AS owner_initials
 """
+AREA_LIST_COLUMNS = f""",
+  {DISTANCE_SQL} AS distance_m,
+  {APPROXIMATE_SQL} AS approximate_location
+"""
 
 
 def list_query(f: ProspectFilter, limit: int, offset: int) -> tuple[str, dict]:
@@ -273,7 +362,7 @@ def list_query(f: ProspectFilter, limit: int, offset: int) -> tuple[str, dict]:
     """
     where, params = f.where()
     order, frm = f.order_by(), f.from_sql()
-    cols = LIST_COLUMNS + (CRM_LIST_COLUMNS if f.crm else "")
+    cols = LIST_COLUMNS + (CRM_LIST_COLUMNS if f.crm else "") + (AREA_LIST_COLUMNS if f.area else "")
     sql = (f"WITH page AS MATERIALIZED (SELECT l.id AS pid {frm}WHERE {where}\n"
            f"ORDER BY {order}\nLIMIT :limit OFFSET :offset)\n"
            f"{cols}{frm.replace('FROM location l', 'FROM page JOIN location l ON l.id = page.pid', 1)}"
@@ -288,6 +377,14 @@ def summary_query(f: ProspectFilter) -> tuple[str, dict]:
            f"count(*) FILTER (WHERE l.geom IS NOT NULL) AS with_coordinates "
            f"{f.from_sql()}WHERE {where}\nGROUP BY 1")
     return sql, params
+
+
+def excluded_no_location_query(f: ProspectFilter) -> tuple[str, dict] | None:
+    """Matches of all the OTHER filters that the area leaves out because they have no coordinates (None: no area)."""
+    if not f.area:
+        return None
+    where, params = f.without_area().where()
+    return f"SELECT count(*) {f.from_sql()}WHERE {where} AND l.geom IS NULL", params
 
 
 def count_query(f: ProspectFilter) -> tuple[str, dict]:

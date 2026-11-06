@@ -12,7 +12,7 @@ from pathlib import Path
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.api.filters import ProspectFilter, count_query
+from app.api.filters import APPROXIMATE_SQL, DISTANCE_SQL, ProspectFilter, count_query
 
 NICHE_SQL = """
 WITH cur AS (
@@ -99,14 +99,23 @@ CRM_EXPORT_COLUMNS = """,
 CRM_EXPORT_FIELDS = ["sales_status", "sales_owner", "follow_up", "next_action"]
 
 
+# M3: with a search area, each row states its distance from the center and whether its location is approximate.
+AREA_EXPORT_COLUMNS = f""",
+  round(CAST({DISTANCE_SQL} AS numeric), 1) AS distance_m,
+  round(CAST({DISTANCE_SQL} / 1609.344 AS numeric), 3) AS distance_mi,
+  {APPROXIMATE_SQL} AS approximate_location
+"""
+AREA_EXPORT_FIELDS = ["distance_m", "distance_mi", "approximate_location"]
+
+
 def export_fields(f: ProspectFilter) -> list[str]:
-    return EXPORT_FIELDS + (CRM_EXPORT_FIELDS if f.crm else [])
+    return EXPORT_FIELDS + (CRM_EXPORT_FIELDS if f.crm else []) + (AREA_EXPORT_FIELDS if f.area else [])
 
 
 def export_query(f: ProspectFilter, limit: int = MAX_EXPORT) -> tuple[str, dict]:
     """The export uses the same FROM, WHERE and ORDER BY as the list, summary and map (app.api.filters)."""
     where, params = f.where()
-    cols = EXPORT_COLUMNS + (CRM_EXPORT_COLUMNS if f.crm else "")
+    cols = EXPORT_COLUMNS + (CRM_EXPORT_COLUMNS if f.crm else "") + (AREA_EXPORT_COLUMNS if f.area else "")
     return (f"{cols}{f.from_sql()}WHERE {where}\nORDER BY {f.order_by()}\nLIMIT :limit",
             {**params, "limit": int(limit)})
 

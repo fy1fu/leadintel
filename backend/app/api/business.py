@@ -14,7 +14,8 @@ from sqlalchemy.engine import Engine
 
 from app.api.filters import (MAX_LEGACY_LIMIT, MAX_PAGE_SIZE, MAX_POINTS, OPERATING_STATUSES, QUALIFICATIONS,
                              CLAIM_FILTERS, FOLLOW_UP_FILTERS, SALES_STATUSES, SORTS, WEBSITE_STATUSES, FilterError, ProspectFilter, count_query, list_query,
-                             points_query, split_list, summary_query)
+                             UNIT_M, excluded_no_location_query, points_query, radius_to_m, split_list,
+                             summary_query)
 from app.api.security import safe_link
 from app.config import get_settings
 from app.reports.prospects import MAX_EXPORT
@@ -61,18 +62,21 @@ def prospect_filter(county: str | None = None, niche: str | None = None, qualifi
                     bos_min: float | None = None, bos_max: float | None = None,
                     lps_min: float | None = None, lps_max: float | None = None, sort: str = "lps",
                     sales: str | None = None, claim: str | None = None, follow_up: str | None = None,
-                    list_id: int | None = None) -> ProspectFilter:
+                    list_id: int | None = None, near_lat: float | None = None, near_lon: float | None = None,
+                    radius: float | None = None, unit: str = "mi", precise_only: bool = False) -> ProspectFilter:
     """Query parameters -> ProspectFilter. Lists are comma-separated; a single value works as before (S2a).
     The CRM context (local organization and user) comes from the database, never from the request (M2)."""
     available, me = crm_context()
     try:
+        radius_m = radius_to_m(radius, unit) if radius is not None else None
         return ProspectFilter(counties=split_list(county), niches=split_list(niche),
                               qualifications=split_list(qualification), q=q, website=split_list(website),
                               operating=split_list(operating), phone=phone, email=email, bos_min=bos_min,
                               bos_max=bos_max, lps_min=lps_min, lps_max=lps_max, sort=sort,
                               sales=split_list(sales), claim=claim or None, follow_up=follow_up or None,
                               list_id=list_id, crm=available, crm_org=me.organization_id if me else None,
-                              crm_user=me.user_id if me else None)
+                              crm_user=me.user_id if me else None, near_lat=near_lat, near_lon=near_lon,
+                              radius_m=radius_m, precise_only=precise_only)
     except FilterError as exc:
         raise HTTPException(422, detail=str(exc)) from exc
 
@@ -113,7 +117,16 @@ def prospects_summary(f: ProspectFilter = Depends(prospect_filter)) -> dict:
     total = sum(int(r["n"]) for r in rows)
     with_coords = sum(int(r["with_coordinates"]) for r in rows)
     return {"total": total, "with_coordinates": with_coords, "without_coordinates": total - with_coords,
-            "by_qualification": {r["qualification"]: int(r["n"]) for r in rows}}
+            "by_qualification": {r["qualification"]: int(r["n"]) for r in rows}, **_area_summary(f)}
+
+
+def _area_summary(f: ProspectFilter) -> dict:
+    """With a search area: the area itself and how many otherwise-matching businesses it leaves out (no location)."""
+    q = excluded_no_location_query(f)
+    if q is None:
+        return {}                          # no area: responses are exactly as before
+    return {"area": {"near_lat": f.near_lat, "near_lon": f.near_lon, "radius_m": f.radius_m,
+                     "precise_only": f.precise_only, "excluded_no_location": int(_scalar(q[0], **q[1]) or 0)}}
 
 
 @router.get("/prospects/points")
@@ -129,7 +142,28 @@ def prospect_points(f: ProspectFilter = Depends(prospect_filter)) -> dict:
     with_coords = sum(int(r["with_coordinates"]) for r in srows)
     return {"points": [[r["id"], r["lon"], r["lat"], r["qualification"]] for r in rows],
             "returned": len(rows), "total": total, "with_coordinates": with_coords,
-            "without_coordinates": total - with_coords, "limit": MAX_POINTS, "truncated": truncated}
+            "without_coordinates": total - with_coords, "limit": MAX_POINTS, "truncated": truncated,
+            **_area_summary(f)}
+
+
+@router.get("/geo/circle")
+def geo_circle(near_lat: float, near_lon: float, radius: float, unit: str = "mi") -> dict:
+    """The search circle exactly as the database searches it: a geodesic buffer (WGS84) as lon/lat GeoJSON, so the
+    map draws the same ground boundary at every zoom level. Also says whether it reaches outside the target counties."""
+    try:
+        f = ProspectFilter(near_lat=near_lat, near_lon=near_lon, radius_m=radius_to_m(radius, unit))
+    except FilterError as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
+    row = _rows(
+        "WITH c AS (SELECT ST_Buffer(ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography, :r, 'quad_segs=32')::geometry g), "
+        "t AS (SELECT ST_Union(a.geom) g FROM area a WHERE a.kind = 'county' AND a.is_target AND a.geom IS NOT NULL) "
+        "SELECT ST_AsGeoJSON(c.g, 7) AS geojson, "
+        "CASE WHEN t.g IS NULL THEN NULL ELSE NOT ST_CoveredBy(c.g, t.g) END AS beyond_target_counties "
+        "FROM c, t", lat=f.near_lat, lon=f.near_lon, r=f.radius_m)[0]
+    import json
+    return {"center": [f.near_lon, f.near_lat], "radius_m": f.radius_m, "unit": unit,
+            "radius": f.radius_m / UNIT_M[unit], "geometry": json.loads(row["geojson"]),
+            "beyond_target_counties": row["beyond_target_counties"]}
 
 
 def _with_links(contacts: list[dict]) -> list[dict]:
