@@ -452,3 +452,103 @@ class Qualification(Base):
     stage: Mapped[str] = mapped_column(String(12))
     computed_at: Mapped[datetime] = _now()
     superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+# ----------------------------------------------------------------------------- local CRM (M2, migration 0006)
+# Stable identities from the start: organizations and users have UUIDs so a later optional sync service can
+# merge independent installations without renumbering. The first version has one local organization and one
+# local user. Sales data never changes business facts: CRM rows only reference location ids.
+from sqlalchemy import CheckConstraint  # noqa: E402
+from sqlalchemy.dialects.postgresql import UUID  # noqa: E402
+
+CRM_STATUSES = ("new", "researching", "contacted", "follow_up", "interested", "meeting", "proposal", "won", "lost",
+                "not_a_fit")
+CRM_ACTIVITY_KINDS = ("note", "call", "email", "meeting", "visit", "claim", "release", "reassign", "status",
+                      "next_action", "follow_up", "list_add", "list_remove")
+
+
+class CrmOrganization(Base):
+    __tablename__ = "crm_organization"
+    id = mapped_column(UUID(as_uuid=False), primary_key=True, server_default=func.gen_random_uuid())
+    name: Mapped[str] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(String(16), server_default="local")          # local | synced (future)
+    created_at: Mapped[datetime] = _now()
+    __table_args__ = (Index("ux_crm_organization_one_local", "kind", unique=True, postgresql_where="kind = 'local'"),)
+
+
+class CrmUser(Base):
+    __tablename__ = "crm_user"
+    id = mapped_column(UUID(as_uuid=False), primary_key=True, server_default=func.gen_random_uuid())
+    organization_id = mapped_column(UUID(as_uuid=False), ForeignKey("crm_organization.id"), index=True, nullable=False)
+    display_name: Mapped[str] = mapped_column(Text)
+    initials: Mapped[str] = mapped_column(String(4))                                  # shown, never an identity
+    email: Mapped[str | None] = mapped_column(Text)
+    role: Mapped[str] = mapped_column(String(16), server_default="owner")            # owner | admin | member
+    active: Mapped[bool] = mapped_column(Boolean, server_default="true")
+    created_at: Mapped[datetime] = _now()
+    __table_args__ = (CheckConstraint("role IN ('owner', 'admin', 'member')", name="ck_crm_user_role"),)
+
+
+class CrmProspect(Base):
+    """One row per (organization, business): owner (claim), pipeline status, next action, follow-up date.
+
+    UNIQUE(organization_id, location_id) makes a second active claim impossible; claims are conditional
+    updates (owner_user_id IS NULL). `version` gives optimistic concurrency for edits.
+    """
+    __tablename__ = "crm_prospect"
+    id: Mapped[int] = _pk()
+    organization_id = mapped_column(UUID(as_uuid=False), ForeignKey("crm_organization.id"), nullable=False)
+    location_id: Mapped[int] = mapped_column(ForeignKey("location.id"), index=True)
+    owner_user_id = mapped_column(UUID(as_uuid=False), ForeignKey("crm_user.id"), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(24), server_default="new")
+    next_action: Mapped[str | None] = mapped_column(Text)
+    follow_up_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    version: Mapped[int] = mapped_column(Integer, server_default="1")
+    created_at: Mapped[datetime] = _now()
+    updated_at: Mapped[datetime] = _now()
+    __table_args__ = (UniqueConstraint("organization_id", "location_id", name="ux_crm_prospect_org_location"),
+                      CheckConstraint("status IN " + str(CRM_STATUSES), name="ck_crm_prospect_status"),
+                      Index("ix_crm_prospect_owner", "organization_id", "owner_user_id"),
+                      Index("ix_crm_prospect_follow_up", "organization_id", "follow_up_at"),
+                      Index("ix_crm_prospect_status", "organization_id", "status"))
+
+
+class CrmActivity(Base):
+    """Append-only sales history: notes, calls, emails, meetings, and every claim/status/follow-up change."""
+    __tablename__ = "crm_activity"
+    id: Mapped[int] = _pk()
+    organization_id = mapped_column(UUID(as_uuid=False), ForeignKey("crm_organization.id"), nullable=False)
+    location_id: Mapped[int] = mapped_column(ForeignKey("location.id"))
+    user_id = mapped_column(UUID(as_uuid=False), ForeignKey("crm_user.id"), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16))
+    body: Mapped[str | None] = mapped_column(Text)
+    data: Mapped[dict] = mapped_column(JSONB, server_default="{}")
+    occurred_at: Mapped[datetime] = _now()
+    created_at: Mapped[datetime] = _now()
+    __table_args__ = (CheckConstraint("kind IN " + str(CRM_ACTIVITY_KINDS), name="ck_crm_activity_kind"),
+                      Index("ix_crm_activity_location", "organization_id", "location_id", "occurred_at"),
+                      Index("ix_crm_activity_user", "organization_id", "user_id", "occurred_at"))
+
+
+class CrmList(Base):
+    """Saved prospect lists and campaigns."""
+    __tablename__ = "crm_list"
+    id: Mapped[int] = _pk()
+    organization_id = mapped_column(UUID(as_uuid=False), ForeignKey("crm_organization.id"), nullable=False)
+    name: Mapped[str] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(String(16), server_default="list")             # list | campaign
+    description: Mapped[str | None] = mapped_column(Text)
+    created_by = mapped_column(UUID(as_uuid=False), ForeignKey("crm_user.id"))
+    archived: Mapped[bool] = mapped_column(Boolean, server_default="false")
+    created_at: Mapped[datetime] = _now()
+    __table_args__ = (UniqueConstraint("organization_id", "name", name="ux_crm_list_org_name"),
+                      CheckConstraint("kind IN ('list', 'campaign')", name="ck_crm_list_kind"))
+
+
+class CrmListItem(Base):
+    __tablename__ = "crm_list_item"
+    list_id: Mapped[int] = mapped_column(ForeignKey("crm_list.id", ondelete="CASCADE"), primary_key=True)
+    location_id: Mapped[int] = mapped_column(ForeignKey("location.id"), primary_key=True, index=True)
+    added_by = mapped_column(UUID(as_uuid=False), ForeignKey("crm_user.id"))
+    added_at: Mapped[datetime] = _now()

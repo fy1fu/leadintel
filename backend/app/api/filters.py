@@ -14,6 +14,10 @@ Meanings are deliberately literal:
 * ``phone`` / ``email`` mean *listed* in a source (active contact link); nothing here means verified.
 * operating status: ``open`` = open; ``closed`` = permanently or temporarily closed; ``unknown`` = anything else,
   including no value. Unknown is never folded into open.
+* sales filters (M2) read the local CRM only and need its context (``crm``, ``crm_org``, ``crm_user``), which the
+  API sets from the local profile. ``sales=new`` includes businesses nobody has touched yet (no CRM row).
+  Follow-up periods use the database server's clock (the same machine in the Friend Edition):
+  ``overdue`` before today, ``today``, ``week`` today through the next 6 days, ``any`` / ``none`` set or not.
 """
 from __future__ import annotations
 
@@ -24,7 +28,11 @@ from app.normalize.core import name_norm
 WEBSITE_STATUSES = ("listed", "social_only", "none_recorded", "unknown")
 OPERATING_STATUSES = ("open", "closed", "unknown")
 QUALIFICATIONS = ("provisionally_qualified", "needs_research", "not_qualified", "unscored")
-SORTS = ("lps", "bos", "name")
+SORTS = ("lps", "bos", "name", "follow_up")
+SALES_STATUSES = ("new", "researching", "contacted", "follow_up", "interested", "meeting", "proposal", "won", "lost",
+                  "not_a_fit")   # same values as app.db.models.CRM_STATUSES (checked by a test)
+CLAIM_FILTERS = ("mine", "others", "unclaimed", "claimed")
+FOLLOW_UP_FILTERS = ("overdue", "today", "week", "any", "none")
 MAX_PAGE_SIZE = 200
 MAX_LEGACY_LIMIT = 5000
 MAX_POINTS = 120_000
@@ -37,6 +45,22 @@ LEFT JOIN score b ON b.location_id = l.id AND b.kind = 'bos' AND b.superseded_at
 LEFT JOIN score p ON p.location_id = l.id AND p.kind = 'lps' AND p.superseded_at IS NULL
 LEFT JOIN qualification q ON q.location_id = l.id AND q.superseded_at IS NULL
 """
+# Added after FROM_SQL only when the CRM tables exist (ProspectFilter.crm); at most one row per business.
+CRM_FROM_SQL = "LEFT JOIN crm_prospect cp ON cp.location_id = l.id AND cp.organization_id = CAST(:crm_org AS uuid)\n"
+_DAY = "date_trunc('day', now())"
+FOLLOW_UP_SQL = {
+    "overdue": f"cp.follow_up_at < {_DAY}",
+    "today": f"(cp.follow_up_at >= {_DAY} AND cp.follow_up_at < {_DAY} + interval '1 day')",
+    "week": f"(cp.follow_up_at >= {_DAY} AND cp.follow_up_at < {_DAY} + interval '7 days')",
+    "any": "cp.follow_up_at IS NOT NULL",
+    "none": "cp.follow_up_at IS NULL",
+}
+CLAIM_SQL = {
+    "mine": "cp.owner_user_id = CAST(:crm_user AS uuid)",
+    "others": "(cp.owner_user_id IS NOT NULL AND cp.owner_user_id IS DISTINCT FROM CAST(:crm_user AS uuid))",
+    "unclaimed": "cp.owner_user_id IS NULL",
+    "claimed": "cp.owner_user_id IS NOT NULL",
+}
 
 _INDEPENDENT = "EXISTS (SELECT 1 FROM online_profile o WHERE o.location_id = l.id AND o.platform_kind = 'independent')"
 _SOCIAL = ("EXISTS (SELECT 1 FROM online_profile o WHERE o.location_id = l.id "
@@ -68,6 +92,7 @@ ORDER_SQL = {
     "lps": "p.value DESC NULLS LAST, l.id",
     "bos": "b.value DESC NULLS LAST, l.id",
     "name": "lower(l.display_name), l.id",
+    "follow_up": "cp.follow_up_at ASC NULLS LAST, p.value DESC NULLS LAST, l.id",
 }
 
 
@@ -117,6 +142,13 @@ class ProspectFilter:
     lps_max: float | None = None
     sort: str = "lps"
     fips: list[str] = field(default_factory=list)          # internal (CLI/legacy export): county FIPS codes
+    sales: list[str] = field(default_factory=list)         # M2: CRM pipeline status ('new' includes no CRM row)
+    claim: str | None = None                               # mine / others / unclaimed / claimed
+    follow_up: str | None = None                           # overdue / today / week / any / none
+    list_id: int | None = None                             # saved list or campaign
+    crm: bool = False                                      # internal: the CRM tables exist
+    crm_org: str | None = None                             # internal: local organization id (None before setup)
+    crm_user: str | None = None                            # internal: local user id
 
     def __post_init__(self):
         _check(self.qualifications, QUALIFICATIONS, "qualification")
@@ -124,6 +156,14 @@ class ProspectFilter:
         _check(self.operating, OPERATING_STATUSES, "operating")
         if self.sort not in SORTS:
             raise FilterError(f"sort: unknown value {self.sort!r}; allowed: {list(SORTS)}")
+        _check(self.sales, SALES_STATUSES, "sales")
+        if self.claim is not None:
+            _check([self.claim], CLAIM_FILTERS, "claim")
+        if self.follow_up is not None:
+            _check([self.follow_up], FOLLOW_UP_FILTERS, "follow_up")
+        if not self.crm and (self.sales or self.claim or self.follow_up or self.list_id is not None
+                             or self.sort == "follow_up"):
+            raise FilterError("the sales filters need a database upgrade (run Setup again)")
         for name in ("bos_min", "bos_max", "lps_min", "lps_max"):
             setattr(self, name, _score(getattr(self, name), name))
         for lo, hi in (("bos_min", "bos_max"), ("lps_min", "lps_max")):
@@ -179,10 +219,33 @@ class ProspectFilter:
             if getattr(self, hi) is not None:
                 conds.append(f"{col} <= :f_{hi}")
                 params[f"f_{hi}"] = getattr(self, hi)
+        if self.crm:
+            params.update(crm_org=self.crm_org, crm_user=self.crm_user)   # None before setup: nothing is joined
+            if self.sales:
+                parts = []
+                named = [v for v in self.sales if v != "new"]
+                if named:
+                    parts.append("cp.status = ANY(CAST(:f_sales AS text[]))")
+                    params["f_sales"] = named
+                if "new" in self.sales:
+                    parts.append("(cp.status IS NULL OR cp.status = 'new')")
+                conds.append("(" + " OR ".join(parts) + ")")
+            if self.claim:
+                conds.append(CLAIM_SQL[self.claim])
+            if self.follow_up:
+                conds.append(FOLLOW_UP_SQL[self.follow_up])
+            if self.list_id is not None:
+                conds.append("EXISTS (SELECT 1 FROM crm_list_item li JOIN crm_list cl ON cl.id = li.list_id "
+                             "WHERE li.location_id = l.id AND li.list_id = :f_list "
+                             "AND cl.organization_id = CAST(:crm_org AS uuid))")
+                params["f_list"] = int(self.list_id)
         return " AND ".join(conds), params
 
     def order_by(self) -> str:
         return ORDER_SQL[self.sort]
+
+    def from_sql(self) -> str:
+        return FROM_SQL + (CRM_FROM_SQL if self.crm else "")
 
 
 LIST_COLUMNS = f"""
@@ -194,6 +257,11 @@ SELECT l.id, l.display_name AS name, coalesce(l.industry_profile, 'unclassified'
   {PHONE_SQL} AS has_phone,
   {EMAIL_SQL} AS has_email
 """
+CRM_LIST_COLUMNS = """,
+  coalesce(cp.status, 'new') AS sales_status, cp.follow_up_at, cp.next_action,
+  coalesce(cp.owner_user_id = CAST(:crm_user AS uuid), false) AS owned_by_me,
+  (SELECT ou.initials FROM crm_user ou WHERE ou.id = cp.owner_user_id) AS owner_initials
+"""
 
 
 def list_query(f: ProspectFilter, limit: int, offset: int) -> tuple[str, dict]:
@@ -204,10 +272,11 @@ def list_query(f: ProspectFilter, limit: int, offset: int) -> tuple[str, dict]:
     skipped by OFFSET made deep pages ~6x slower (1.25 s vs 0.2 s at page 400 of 100k rows, S2b measurement).
     """
     where, params = f.where()
-    order = f.order_by()
-    sql = (f"WITH page AS MATERIALIZED (SELECT l.id AS pid {FROM_SQL}WHERE {where}\n"
+    order, frm = f.order_by(), f.from_sql()
+    cols = LIST_COLUMNS + (CRM_LIST_COLUMNS if f.crm else "")
+    sql = (f"WITH page AS MATERIALIZED (SELECT l.id AS pid {frm}WHERE {where}\n"
            f"ORDER BY {order}\nLIMIT :limit OFFSET :offset)\n"
-           f"{LIST_COLUMNS}{FROM_SQL.replace('FROM location l', 'FROM page JOIN location l ON l.id = page.pid', 1)}"
+           f"{cols}{frm.replace('FROM location l', 'FROM page JOIN location l ON l.id = page.pid', 1)}"
            f"ORDER BY {order}")
     return sql, {**params, "limit": int(limit), "offset": int(offset)}
 
@@ -217,18 +286,18 @@ def summary_query(f: ProspectFilter) -> tuple[str, dict]:
     where, params = f.where()
     sql = (f"SELECT coalesce(q.status, 'unscored') AS qualification, count(*) AS n, "
            f"count(*) FILTER (WHERE l.geom IS NOT NULL) AS with_coordinates "
-           f"{FROM_SQL}WHERE {where}\nGROUP BY 1")
+           f"{f.from_sql()}WHERE {where}\nGROUP BY 1")
     return sql, params
 
 
 def count_query(f: ProspectFilter) -> tuple[str, dict]:
     where, params = f.where()
-    return f"SELECT count(*) {FROM_SQL}WHERE {where}", params
+    return f"SELECT count(*) {f.from_sql()}WHERE {where}", params
 
 
 def points_query(f: ProspectFilter, cap: int = MAX_POINTS) -> tuple[str, dict]:
     """Mappable businesses only (cap + 1 rows are fetched so truncation can be detected)."""
     where, params = f.where()
     sql = (f"SELECT l.id, ST_X(l.geom) AS lon, ST_Y(l.geom) AS lat, q.status AS qualification "
-           f"{FROM_SQL}WHERE {where} AND l.geom IS NOT NULL\nORDER BY {f.order_by()}\nLIMIT :cap")
+           f"{f.from_sql()}WHERE {where} AND l.geom IS NOT NULL\nORDER BY {f.order_by()}\nLIMIT :cap")
     return sql, {**params, "cap": int(cap) + 1}

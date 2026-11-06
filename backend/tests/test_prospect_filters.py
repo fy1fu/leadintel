@@ -181,6 +181,7 @@ def api(monkeypatch):
 
     monkeypatch.setattr(business, "_rows", rows)
     monkeypatch.setattr(business, "_scalar", scalar)
+    monkeypatch.setattr(business, "crm_context", lambda: (False, None))
     client = TestClient(create_app(SimpleNamespace(diagnostics=None)), base_url="http://127.0.0.1:8765")
     return client, calls
 

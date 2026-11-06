@@ -13,7 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from app.api.filters import (MAX_LEGACY_LIMIT, MAX_PAGE_SIZE, MAX_POINTS, OPERATING_STATUSES, QUALIFICATIONS,
-                             SORTS, WEBSITE_STATUSES, FilterError, ProspectFilter, count_query, list_query,
+                             CLAIM_FILTERS, FOLLOW_UP_FILTERS, SALES_STATUSES, SORTS, WEBSITE_STATUSES, FilterError, ProspectFilter, count_query, list_query,
                              points_query, split_list, summary_query)
 from app.api.security import safe_link
 from app.config import get_settings
@@ -47,17 +47,32 @@ def _scalar(sql: str, **params):
         return c.execute(text(sql), params).scalar()
 
 
+def crm_context():
+    """(CRM tables present, local identity or None), read from the business database (M2)."""
+    from app.crm import service as crm
+    with engine().connect() as c:
+        available = crm.crm_available(c)
+        return available, (crm.identity(c) if available else None)
+
+
 def prospect_filter(county: str | None = None, niche: str | None = None, qualification: str | None = None,
                     q: str | None = None, website: str | None = None, operating: str | None = None,
                     phone: bool | None = None, email: bool | None = None,
                     bos_min: float | None = None, bos_max: float | None = None,
-                    lps_min: float | None = None, lps_max: float | None = None, sort: str = "lps") -> ProspectFilter:
-    """Query parameters -> ProspectFilter. Lists are comma-separated; a single value works as before (S2a)."""
+                    lps_min: float | None = None, lps_max: float | None = None, sort: str = "lps",
+                    sales: str | None = None, claim: str | None = None, follow_up: str | None = None,
+                    list_id: int | None = None) -> ProspectFilter:
+    """Query parameters -> ProspectFilter. Lists are comma-separated; a single value works as before (S2a).
+    The CRM context (local organization and user) comes from the database, never from the request (M2)."""
+    available, me = crm_context()
     try:
         return ProspectFilter(counties=split_list(county), niches=split_list(niche),
                               qualifications=split_list(qualification), q=q, website=split_list(website),
                               operating=split_list(operating), phone=phone, email=email, bos_min=bos_min,
-                              bos_max=bos_max, lps_min=lps_min, lps_max=lps_max, sort=sort)
+                              bos_max=bos_max, lps_min=lps_min, lps_max=lps_max, sort=sort,
+                              sales=split_list(sales), claim=claim or None, follow_up=follow_up or None,
+                              list_id=list_id, crm=available, crm_org=me.organization_id if me else None,
+                              crm_user=me.user_id if me else None)
     except FilterError as exc:
         raise HTTPException(422, detail=str(exc)) from exc
 
@@ -132,7 +147,8 @@ def filter_options() -> dict:
     niches = [r["niche"] for r in _rows("SELECT DISTINCT industry_profile AS niche FROM location "
                                         "WHERE industry_profile IS NOT NULL AND merged_into_id IS NULL ORDER BY 1")]
     return {"counties": counties, "niches": niches, "website": list(WEBSITE_STATUSES),
-            "operating": list(OPERATING_STATUSES), "qualifications": list(QUALIFICATIONS), "sorts": list(SORTS)}
+            "operating": list(OPERATING_STATUSES), "qualifications": list(QUALIFICATIONS), "sorts": list(SORTS),
+            "sales": list(SALES_STATUSES), "claim": list(CLAIM_FILTERS), "follow_up": list(FOLLOW_UP_FILTERS)}
 
 
 EXPORT_CHUNK_ROWS = 500   # rows per streamed chunk
@@ -151,7 +167,7 @@ def prospects_export(f: ProspectFilter = Depends(prospect_filter),
     import io
     from datetime import datetime
 
-    from app.reports.prospects import EXPORT_FIELDS, export_query, export_row
+    from app.reports.prospects import export_fields, export_query, export_row
     e = engine()
     csql, cparams = count_query(f)
     with e.connect() as c:
@@ -160,7 +176,7 @@ def prospects_export(f: ProspectFilter = Depends(prospect_filter),
 
     def rows():
         buf = io.StringIO()
-        w = csv.DictWriter(buf, fieldnames=EXPORT_FIELDS)
+        w = csv.DictWriter(buf, fieldnames=export_fields(f))
         w.writeheader()
         with e.connect().execution_options(stream_results=True, yield_per=EXPORT_CHUNK_ROWS) as c:
             for i, r in enumerate(c.execute(text(sql), params).mappings(), 1):

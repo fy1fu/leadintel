@@ -94,7 +94,11 @@ def _sources():
             yield p.relative_to(ROOT).as_posix(), p.read_text(encoding="utf-8")
 
 
-ENGINE_FACTORIES = {"app/db/session.py", "app/db/locks.py", "app/net/store.py", "migrations/env.py"}
+ENGINE_FACTORIES = {"app/db/session.py", "app/db/locks.py", "app/net/store.py", "migrations/env.py",
+                    "app/crm/service.py"}   # M2: gate-exempt CRM engine, writes limited to crm_* (tests/test_crm.py)
+# Engines exempt from the commit gate, each with a reason; a new one needs review.
+EXEMPT_ENGINES = {"app/db/locks.py": "the lock connection itself", "app/net/store.py": "diagnostics store (D9)",
+                  "app/crm/service.py": "CRM writes, refused outside crm_* tables and during db upgrade"}
 COMMIT_SITES = {"app/cli.py", "app/pipeline/discover.py", "app/db/session.py",
                 "app/sources/btr/storage.py"}   # import-btr (Phase B0), runs under the lock and the gate
 # Modules that write inside the managed data folder; each must call ensure_write_allowed.
@@ -113,6 +117,11 @@ FILE_WRITE = re.compile(r"os\.replace\(|os\.rename\(|os\.link\(|\.write_text\(|\
 def test_w3_engines_are_created_only_in_reviewed_modules():
     found = {name for name, src in _sources() if re.search(r"\bcreate_engine\(", src)}
     assert found <= ENGINE_FACTORIES, found - ENGINE_FACTORIES
+
+
+def test_w3_gate_exempt_engines_are_reviewed():
+    found = {name for name, src in _sources() if re.search(r"\bexempt_engine\(", src)}
+    assert found <= set(EXEMPT_ENGINES), found - set(EXEMPT_ENGINES)
 
 
 def test_w3_no_raw_connections_or_autocommit_outside_the_lock_module():

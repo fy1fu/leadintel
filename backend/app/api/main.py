@@ -23,7 +23,9 @@ def create_app(ctx: NetContext | None = None, *, token: str | None = None) -> Fa
     from pathlib import Path
 
     from app.api.business import router as business_router
+    from app.api.crm import router as crm_router
     app.include_router(business_router)
+    app.include_router(crm_router)
     static = Path(__file__).parent / "static"
     index = static / "index.html"
     # Interface assets (CSS/JS). Their URLs carry a content hash, so an update never leaves a stale cached copy.

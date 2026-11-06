@@ -12,7 +12,7 @@ from pathlib import Path
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.api.filters import FROM_SQL, ProspectFilter, count_query
+from app.api.filters import ProspectFilter, count_query
 
 NICHE_SQL = """
 WITH cur AS (
@@ -90,10 +90,24 @@ SELECT l.id, l.display_name, coalesce(l.industry_profile, 'unclassified') AS ind
 MAX_EXPORT = 100_000
 
 
+# M2: the salesperson's own CRM fields, added only when the CRM is available.
+CRM_EXPORT_COLUMNS = """,
+  coalesce(cp.status, 'new') AS sales_status,
+  (SELECT ou.display_name FROM crm_user ou WHERE ou.id = cp.owner_user_id) AS sales_owner,
+  cp.follow_up_at AS follow_up, cp.next_action
+"""
+CRM_EXPORT_FIELDS = ["sales_status", "sales_owner", "follow_up", "next_action"]
+
+
+def export_fields(f: ProspectFilter) -> list[str]:
+    return EXPORT_FIELDS + (CRM_EXPORT_FIELDS if f.crm else [])
+
+
 def export_query(f: ProspectFilter, limit: int = MAX_EXPORT) -> tuple[str, dict]:
     """The export uses the same FROM, WHERE and ORDER BY as the list, summary and map (app.api.filters)."""
     where, params = f.where()
-    return (f"{EXPORT_COLUMNS}{FROM_SQL}WHERE {where}\nORDER BY {f.order_by()}\nLIMIT :limit",
+    cols = EXPORT_COLUMNS + (CRM_EXPORT_COLUMNS if f.crm else "")
+    return (f"{cols}{f.from_sql()}WHERE {where}\nORDER BY {f.order_by()}\nLIMIT :limit",
             {**params, "limit": int(limit)})
 
 
@@ -131,7 +145,7 @@ def export_csv(s: Session, path: Path, fips: list[str] | None = None, *, niche: 
     path.parent.mkdir(parents=True, exist_ok=True)
     n = 0
     with open(path, "w", newline="", encoding="utf-8") as fh:
-        w = csv.DictWriter(fh, fieldnames=EXPORT_FIELDS)
+        w = csv.DictWriter(fh, fieldnames=export_fields(f))
         w.writeheader()
         for r in s.execute(text(sql), params).mappings():
             w.writerow(export_row(r))

@@ -1,4 +1,4 @@
-// LeadIntel interface (M1). Plain JavaScript, no build step. All data shown here comes from untrusted
+// LeadIntel interface (M1, local CRM from M2). Plain JavaScript, no build step. All data shown here comes from untrusted
 // sources: every value goes through esc(), and only server-vetted links (href) are made clickable.
 "use strict";
 
@@ -17,15 +17,20 @@ const LABELS = {
   website: {listed: "Website listed", social_only: "Only social / link page", none_recorded: "No website recorded",
             unknown: "Unknown"},
   operating: {open: "Open", closed: "Closed", unknown: "Unknown"},
+  sales: {new: "New", researching: "Researching", contacted: "Contacted", follow_up: "Follow up", interested: "Interested",
+          meeting: "Meeting", proposal: "Proposal", won: "Won", lost: "Lost", not_a_fit: "Not a fit"},
 };
 const DEFAULTS = {qualification: ["provisionally_qualified", "needs_research"], operating: ["open", "unknown"]};
-const MULTI = ["county", "niche", "qualification", "website", "operating"];
-const SINGLE = ["q", "phone", "email", "lps_min", "bos_min", "sort"];
+const MULTI = ["county", "niche", "qualification", "website", "operating", "sales"];
+const SINGLE = ["q", "phone", "email", "lps_min", "bos_min", "sort", "claim", "follow_up", "list_id"];
+const SALES_SELECTS = ["claim", "follow_up", "list_id"];
 
-const state = {filters: {}, page: 1, selected: null, options: null, view: "split", items: [], seq: 0};
+const state = {filters: {}, page: 1, selected: null, options: null, view: "split", items: [], seq: 0,
+               crm: {available: false, configured: false, me: null}, lists: [], sales: null};
 
 // ---------------------------------------------------------------- helpers
 async function api(path, opts = {}) {
+  if (opts.json !== undefined) opts = {...opts, body: JSON.stringify(opts.json), headers: {...(opts.headers || {}), "Content-Type": "application/json"}};
   const r = await fetch(path, {...opts, headers: {...(opts.headers || {}), ...(opts.method && opts.method !== "GET" ? {"X-LeadIntel-Token": TOKEN} : {})}});
   if (!r.ok) {
     const detail = (await r.json().catch(() => ({}))).detail;
@@ -82,9 +87,14 @@ function renderFilters() {
   const o = state.options || {counties: [], niches: []};
   $("#f-county").innerHTML = o.counties.map(c => chip("county", c.key, c.name)).join("") || '<span class="muted">-</span>';
   $("#f-niche").innerHTML = o.niches.map(n => chip("niche", n, human(n))).join("") || '<span class="muted">-</span>';
-  for (const k of ["qualification", "website", "operating"])
+  for (const k of ["qualification", "website", "operating", "sales"])
     $(`#f-${k}`).innerHTML = Object.entries(LABELS[k]).map(([v, l]) => chip(k, v, l)).join("");
-  for (const k of ["phone", "email", "sort"]) $(`#${k}`).value = state.filters[k] || (k === "sort" ? "lps" : "");
+  const crmOn = state.crm.available;
+  $("#g-sales").hidden = !crmOn;
+  $$("#sort [data-crm]").forEach(o => o.hidden = !crmOn);
+  $("#list_id").innerHTML = '<option value="">Any</option>' + state.lists.filter(l => !l.archived || String(l.id) === state.filters.list_id)
+    .map(l => `<option value="${esc(l.id)}">${esc(l.name)}${l.kind === "campaign" ? " (campaign)" : ""}</option>`).join("");
+  for (const k of ["phone", "email", "sort", ...SALES_SELECTS]) $(`#${k}`).value = state.filters[k] || (k === "sort" ? "lps" : "");
   for (const k of ["lps_min", "bos_min"]) $(`#${k}`).value = state.filters[k] || "";
   $("#q").value = state.filters.q || "";
 }
@@ -135,7 +145,7 @@ function itemHtml(i) {
     <div class="meta">${esc(human(i.industry))} · ${esc(countyName(i.county))} · BOS ${esc(i.bos ?? "–")}</div>
     <div class="tags"><span class="tag q-${esc(q)}">${esc(LABELS.qualification[q] || human(q))}</span>
       <span class="tag">${esc(web)}</span>${i.has_phone ? '<span class="tag">Phone listed</span>' : ""}${i.has_email ? '<span class="tag">Email listed</span>' : ""}
-      ${i.operating_status && i.operating_status !== "open" ? `<span class="tag">${esc(human(i.operating_status))}</span>` : ""}</div>
+      ${i.operating_status && i.operating_status !== "open" ? `<span class="tag">${esc(human(i.operating_status))}</span>` : ""}${salesTags(i)}</div>
   </button>`;
 }
 function renderList(d, s) {
@@ -243,6 +253,7 @@ function renderDetail(p) {
     <div class="muted">${esc(human(L.industry_profile || "unclassified"))}${where ? " · " + esc(where) : ""}</div>
     <div class="tags"><span class="tag q-${esc(qs)}">${esc(LABELS.qualification[qs] || human(qs))}</span>
       <span class="tag">${esc(L.operating_status === "open" ? "Open" : ["permanently_closed", "temporarily_closed"].includes(L.operating_status) ? human(L.operating_status) : "Operating status unknown")}</span></div></div>
+  ${state.crm.available ? '<div class="section sales" id="sales-sec"><h3>Sales</h3><p class="muted">Loading…</p></div>' : ""}
   <div class="section"><h3>Contact</h3>${contactRows(p.contacts, "phone", "Phone")}${contactRows(p.contacts, "email", "Email")}${websiteRows(p.online_profiles)}</div>
   <div class="section"><h3>Scores</h3><div class="scores">
     <div class="scorecard"><div class="label">Lead priority (LPS)</div><div class="big">${esc(lps?.value ?? "–")}</div>
@@ -271,7 +282,7 @@ async function select(id, fromList) {
   const it = state.items.find(i => i.id === id);
   if (map && mapReady && it?.lon != null && fromList) map.flyTo({center: [it.lon, it.lat], zoom: 15});
   $("#detail").innerHTML = '<p class="muted pad">Loading…</p>';
-  try { renderDetail(await api(`/api/prospects/${id}`)); }
+  try { renderDetail(await api(`/api/prospects/${id}`)); if (state.crm.available) loadSales(id); }
   catch (e) { $("#detail").innerHTML = `<p class="pad"><strong>Could not load this business.</strong><br>${esc(e.message)}</p>`; }
 }
 
@@ -325,10 +336,300 @@ async function exportCsv() {
   toast(`Exporting ${fmt(Math.min(s.total ?? 0, limit))} businesses…`);
 }
 
+// ---------------------------------------------------------------- local CRM (M2)
+// Everything typed here (notes, next actions, list names) is shown back through esc() like any other data.
+const ACT_LABELS = {note: "Note", call: "Call", email: "Email", meeting: "Meeting", visit: "Visit", claim: "Claimed",
+  release: "Released", reassign: "Reassigned", status: "Status", next_action: "Next action", follow_up: "Follow-up",
+  list_add: "List", list_remove: "List"};
+const OUTCOMES = ["Reached", "No answer", "Left a message", "Interested", "Not interested", "Asked to call back"];
+const pad2 = n => String(n).padStart(2, "0");
+const fmtDate = iso => iso ? new Date(iso).toLocaleDateString([], {weekday: "short", month: "short", day: "numeric"}) : "";
+const fmtWhen = iso => iso ? new Date(iso).toLocaleString([], {month: "short", day: "numeric", hour: "numeric", minute: "2-digit"}) : "";
+const dateInput = iso => { if (!iso) return ""; const d = new Date(iso); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; };
+const fromDateInput = v => { if (!v) return null; const [y, m, d] = v.split("-").map(Number); return new Date(y, m - 1, d, 9).toISOString(); };
+function dueKind(iso) {
+  if (!iso) return null;
+  const t = new Date(); t.setHours(0, 0, 0, 0);
+  const d = new Date(iso);
+  return d < t ? "overdue" : d < new Date(t.getTime() + 864e5) ? "today" : "upcoming";
+}
+const canManage = () => ["owner", "admin"].includes(state.crm.me?.role);
+
+function salesTags(i) {
+  if (!("sales_status" in i)) return "";
+  let h = "";
+  if (i.sales_status && i.sales_status !== "new") h += `<span class="tag s-${esc(i.sales_status)}">${esc(LABELS.sales[i.sales_status] || human(i.sales_status))}</span>`;
+  if (i.owned_by_me) h += '<span class="tag mine">Mine</span>';
+  else if (i.owner_initials) h += `<span class="tag">Claimed · ${esc(i.owner_initials)}</span>`;
+  const due = dueKind(i.follow_up_at);
+  if (due) h += `<span class="tag due-${due}">${due === "overdue" ? "Follow-up overdue" : due === "today" ? "Follow up today" : "Follow up " + esc(fmtDate(i.follow_up_at))}</span>`;
+  return h;
+}
+
+async function loadCrm() {
+  try { state.crm = await api("/api/crm/me"); } catch { state.crm = {available: false, configured: false, me: null}; }
+  $("#sales").hidden = $("#profile-btn").hidden = !state.crm.available;
+  if (!state.crm.available) return;
+  $("#profile-btn").textContent = state.crm.me?.initials || "👤";
+  try { state.lists = await api("/api/crm/lists"); } catch { state.lists = []; }
+  updateSalesButton();
+}
+async function updateSalesButton() {
+  if (!state.crm.configured) { $("#sales").textContent = "Sales"; return; }
+  try {
+    const d = await api("/api/crm/dashboard");
+    const due = (d.overdue || 0) + (d.due_today || 0);
+    $("#sales").textContent = due ? `Sales · ${due} due` : "Sales";
+    $("#sales").classList.toggle("attention", !!d.overdue);
+  } catch { /* the button still opens the dashboard, which reports the error */ }
+}
+
+// profile
+let profileWaiters = [];
+function openProfile() {
+  const f = $("#profile-form"), me = state.crm.me || {};
+  f.display_name.value = me.display_name || ""; f.initials.value = me.initials || ""; f.email.value = me.email || "";
+  $("#profile").showModal(); f.display_name.focus();
+}
+function ensureProfile() {
+  if (state.crm.configured) return Promise.resolve(true);
+  openProfile();
+  return new Promise(res => profileWaiters.push(res));
+}
+async function saveProfile(e) {
+  e.preventDefault();
+  const f = e.target;
+  try {
+    state.crm = await api("/api/crm/me", {method: "POST", json: {display_name: f.display_name.value.trim(),
+      initials: f.initials.value.trim(), email: f.email.value.trim() || null}});
+    $("#profile").close(); $("#profile-btn").textContent = state.crm.me.initials;
+    toast("Profile saved");
+    profileWaiters.splice(0).forEach(r => r(true));
+    if (state.selected) loadSales(state.selected);
+    updateSalesButton();
+  } catch (err) { toast(err.message); }
+}
+
+// sales section of a business
+async function loadSales(id) {
+  try {
+    const st = await api(`/api/crm/prospects/${id}`);
+    if (state.selected !== id) return;
+    state.sales = {id, ...st}; renderSales();
+  } catch (e) {
+    const sec = $("#sales-sec"); if (sec) sec.innerHTML = `<h3>Sales</h3><p class="muted">Sales information unavailable: ${esc(e.message)}</p>`;
+  }
+}
+function actText(a) {
+  const d = a.data || {}, lab = v => LABELS.sales[v] || human(v);
+  switch (a.kind) {
+    case "claim": return "Claimed this business";
+    case "release": return "Released the claim";
+    case "reassign": return "Reassigned the business";
+    case "status": return `Status: ${lab(d.from)} → ${lab(d.to)}`;
+    case "next_action": return a.body ? `Next action: ${a.body}` : "Next action cleared";
+    case "follow_up": return d.at ? `Follow-up set for ${fmtDate(d.at)}` : "Follow-up date cleared";
+    case "list_add": return `Added to "${d.list}"`;
+    case "list_remove": return `Removed from "${d.list}"`;
+    default: return (ACT_LABELS[a.kind] || human(a.kind)) + (d.outcome ? ` · ${d.outcome}` : "");
+  }
+}
+const USER_KINDS = ["note", "call", "email", "meeting", "visit"];
+function timelineHtml(acts) {
+  if (!acts.length) return '<p class="muted">No activity yet.</p>';
+  return `<ol class="timeline">${acts.map(a => `<li class="${USER_KINDS.includes(a.kind) ? "user" : "sys"}">
+    <div class="tl-head"><b>${esc(actText(a))}</b><span class="muted">${esc(fmtWhen(a.occurred_at))} · ${esc(a.initials)}</span></div>
+    ${USER_KINDS.includes(a.kind) && a.body ? `<div class="tl-body">${esc(a.body)}</div>` : ""}</li>`).join("")}</ol>`;
+}
+function renderSales() {
+  const sec = $("#sales-sec"), st = state.sales;
+  if (!sec || !st || st.id !== state.selected) return;
+  if (!st.configured) {
+    sec.innerHTML = `<h3>Sales</h3><p>Set up your salesperson profile to claim businesses, track the pipeline and keep notes.</p>
+      <button type="button" class="btn primary" data-act="profile">Set up profile</button>`;
+    return;
+  }
+  const o = st.owner;
+  const who = !o ? '<span class="muted">Not claimed</span>'
+    : st.owned_by_me ? `<b>Claimed by you</b> <span class="muted">since ${esc(fmtDate(st.claimed_at))}</span>`
+    : `<b>Claimed by ${esc(o.display_name)} (${esc(o.initials)})</b>`;
+  const buttons = !o ? '<button type="button" class="btn primary" data-act="claim">Claim</button>'
+    : st.owned_by_me ? '<button type="button" class="btn" data-act="release">Release</button>'
+    : canManage() ? '<button type="button" class="btn" data-act="takeover">Take over</button> <button type="button" class="btn" data-act="release">Release</button>' : "";
+  const readOnly = o && !st.owned_by_me && !canManage();
+  const inLists = new Set(st.lists.map(l => l.id));
+  const addable = state.lists.filter(l => !l.archived && !inLists.has(l.id));
+  sec.innerHTML = `<h3>Sales</h3>
+    <div class="claimrow">${who}<span class="grow"></span>${buttons}</div>
+    <form id="sales-form" class="salesform" ${readOnly ? 'inert' : ""}>
+      <label class="field">Status <select name="status">${Object.entries(LABELS.sales).map(([v, l]) => `<option value="${v}"${v === st.status ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+      <label class="field">Follow-up date <input type="date" name="follow_up" value="${esc(dateInput(st.follow_up_at))}"></label>
+      <label class="field wide">Next action <input name="next_action" maxlength="500" value="${esc(st.next_action || "")}" placeholder="e.g. Call the owner about a new website"></label>
+      <div class="formend"><button class="btn primary">Save</button></div>
+    </form>
+    <div class="listsrow"><span class="muted">Lists:</span>
+      ${st.lists.map(l => `<span class="lchip">${esc(l.name)}<button type="button" class="link" data-act="unlist" data-list="${esc(l.id)}" aria-label="Remove from ${esc(l.name)}">✕</button></span>`).join("") || '<span class="muted">none</span>'}
+      <select data-act="addlist" aria-label="Add to a list"><option value="">Add to list…</option>${addable.map(l => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join("")}<option value="new">New list…</option></select></div>
+    <form id="act-form" class="actform">
+      <div class="actrow"><select name="kind" aria-label="Kind">${USER_KINDS.map(k => `<option value="${k}">${esc(ACT_LABELS[k])}</option>`).join("")}</select>
+        <select name="outcome" aria-label="Outcome"><option value="">Outcome…</option>${OUTCOMES.map(x => `<option>${esc(x)}</option>`).join("")}</select></div>
+      <textarea name="body" maxlength="10000" rows="2" placeholder="What happened? Notes stay in your own database."></textarea>
+      <div class="formend"><button class="btn">Add to history</button></div>
+    </form>
+    ${timelineHtml(st.activities)}`;
+}
+function patchItem(id, st) {
+  const it = state.items.find(i => i.id === id);
+  if (!it || !("sales_status" in it)) return;
+  Object.assign(it, {sales_status: st.status, follow_up_at: st.follow_up_at, next_action: st.next_action,
+    owned_by_me: st.owned_by_me, owner_initials: st.owner?.initials || null});
+  const el = $(`#list .item[data-id="${id}"]`);
+  if (el) el.outerHTML = itemHtml(it);
+}
+async function salesWrite(path, opts, okMsg) {
+  const id = state.selected;
+  try {
+    const st = await api(path, opts);
+    if (state.selected === id) { state.sales = {id, ...st}; renderSales(); }
+    patchItem(id, st); updateSalesButton();
+    if (okMsg) toast(okMsg);
+    return true;
+  } catch (e) {
+    toast(e.message);
+    if (state.selected === id) loadSales(id);          // show the current state after a conflict
+    return false;
+  }
+}
+async function onSalesClick(e) {
+  const b = e.target.closest("[data-act]"); if (!b || b.tagName === "SELECT") return;
+  const id = state.selected, act = b.dataset.act;
+  if (act === "profile") return openProfile();
+  if (!(await ensureProfile())) return;
+  if (act === "claim") return salesWrite(`/api/crm/prospects/${id}/claim`, {method: "POST"}, "Claimed");
+  if (act === "release") return salesWrite(`/api/crm/prospects/${id}/release`, {method: "POST"}, "Released");
+  if (act === "takeover") return salesWrite(`/api/crm/prospects/${id}/reassign`, {method: "POST", json: {user_id: state.crm.me.user_id}}, "Now yours");
+  if (act === "unlist") return salesWrite(`/api/crm/lists/${b.dataset.list}/items/${id}`, {method: "DELETE"}, "Removed from list");
+}
+async function onSalesChange(e) {
+  const sel = e.target.closest('select[data-act="addlist"]'); if (!sel) return;
+  let listId = sel.value; sel.value = "";
+  if (!listId || !(await ensureProfile())) return;
+  if (listId === "new") {
+    const name = (prompt("Name of the new list (e.g. \"Lawn care - week 1\"):") || "").trim();
+    if (!name) return;
+    try { listId = (await api("/api/crm/lists", {method: "POST", json: {name, kind: "list"}})).id; }
+    catch (err) { return toast(err.message); }
+    await reloadLists();
+  }
+  salesWrite(`/api/crm/lists/${listId}/items`, {method: "POST", json: {location_id: state.selected}}, "Added to list");
+}
+async function onSalesSubmit(e) {
+  const f = e.target.closest("form"); if (!f || !["sales-form", "act-form"].includes(f.id)) return;
+  e.preventDefault();
+  if (!(await ensureProfile())) return;
+  const id = state.selected, st = state.sales;
+  if (f.id === "sales-form") {
+    const body = {version: st.version};
+    if (f.status.value !== st.status) body.status = f.status.value;
+    if (f.next_action.value.trim() !== (st.next_action || "")) body.next_action = f.next_action.value.trim();
+    if (f.follow_up.value !== dateInput(st.follow_up_at)) body.follow_up_at = fromDateInput(f.follow_up.value);
+    if (Object.keys(body).length === 1) return toast("Nothing to save");
+    return salesWrite(`/api/crm/prospects/${id}`, {method: "PATCH", json: body}, "Saved");
+  }
+  const kind = f.kind.value, text = f.body.value.trim();
+  if (kind === "note" && !text) return toast("Write the note first");
+  const ok = await salesWrite(`/api/crm/prospects/${id}/activities`, {method: "POST",
+    json: {kind, body: text || null, outcome: f.outcome.value || null}}, "Added to history");
+  if (ok && $("#act-form")) $("#act-form").body.value = "";
+}
+async function reloadLists() {
+  try { state.lists = await api("/api/crm/lists"); } catch { /* keep the old list */ }
+  const cur = $("#list_id").value; renderFilters(); $("#list_id").value = cur;
+}
+
+// dashboard
+async function openDash() {
+  $("#dash").showModal();
+  if (!state.crm.configured) {
+    $("#dash-body").innerHTML = '<p>Set up your salesperson profile to start claiming businesses.</p><button type="button" class="btn primary" data-dash="profile">Set up profile</button>';
+    return;
+  }
+  $("#dash-body").innerHTML = '<p class="muted">Loading…</p>';
+  try {
+    const [d] = await Promise.all([api("/api/crm/dashboard"), reloadLists()]);
+    renderDash(d);
+  } catch (e) { $("#dash-body").innerHTML = `<p><strong>Could not load the sales overview.</strong><br>${esc(e.message)}</p>`; }
+}
+function renderDash(d) {
+  const due = {overdue: "Overdue", today: "Today", upcoming: "Soon"};
+  $("#dash-body").innerHTML = `
+    <div class="stats"><div><b>${fmt(d.claimed)}</b><span>claimed by you</span></div>
+      <div class="${d.overdue ? "bad" : ""}"><b>${fmt(d.overdue)}</b><span>follow-ups overdue</span></div>
+      <div><b>${fmt(d.due_today)}</b><span>due today</span></div></div>
+    <h3>Your pipeline</h3>
+    <div class="pipeline">${Object.entries(LABELS.sales).map(([s, l]) => `<button type="button" class="pstage s-${s}" data-dash="status" data-status="${s}"${d.pipeline[s] ? "" : " disabled"}><b>${fmt(d.pipeline[s])}</b><span>${esc(l)}</span></button>`).join("")}</div>
+    <h3>Follow-ups (next 7 days)</h3>
+    ${d.follow_ups.length ? `<ul class="dlist">${d.follow_ups.map(f => `<li><button type="button" class="drow" data-dash="open" data-id="${esc(f.location_id)}">
+      <span class="tag due-${esc(f.due)}">${esc(due[f.due])} · ${esc(fmtDate(f.follow_up_at))}</span> <b>${esc(f.name)}</b>
+      <span class="muted">${esc(LABELS.sales[f.status] || f.status)}${f.next_action ? " · " + esc(f.next_action) : ""}</span></button></li>`).join("")}</ul>`
+      : '<p class="muted">Nothing due. Set a follow-up date on a business to see it here.</p>'}
+    <h3>Recent activity</h3>
+    ${d.recent.length ? `<ul class="dlist">${d.recent.map(a => `<li><button type="button" class="drow" data-dash="open" data-id="${esc(a.location_id)}">
+      <span class="muted">${esc(fmtWhen(a.occurred_at))} · ${esc(a.initials)}</span> <b>${esc(a.name)}</b> <span>${esc(actText(a))}</span></button></li>`).join("")}</ul>`
+      : '<p class="muted">No activity yet.</p>'}
+    <h3>Lists and campaigns</h3>
+    ${state.lists.length ? `<ul class="dlist">${state.lists.map(l => `<li class="lrow${l.archived ? " archived" : ""}"><b>${esc(l.name)}</b>
+      <span class="muted">${l.kind === "campaign" ? "Campaign" : "List"} · ${fmt(l.size)} business${l.size === 1 ? "" : "es"}${l.archived ? " · archived" : ""}</span><span class="grow"></span>
+      <button type="button" class="btn" data-dash="show" data-list="${esc(l.id)}">Show</button>
+      <button type="button" class="btn" data-dash="archive" data-list="${esc(l.id)}" data-archived="${l.archived}">${l.archived ? "Restore" : "Archive"}</button></li>`).join("")}</ul>`
+      : '<p class="muted">No lists yet.</p>'}
+    <form id="newlist" class="newlist"><input name="name" maxlength="120" required placeholder="New list or campaign name" aria-label="New list name">
+      <select name="kind" aria-label="Kind"><option value="list">List</option><option value="campaign">Campaign</option></select>
+      <button class="btn">Create</button></form>`;
+}
+function showFiltered(filters) {
+  $("#dash").close();
+  state.filters = filters; renderFilters(); refresh(true);
+}
+async function onDashClick(e) {
+  const b = e.target.closest("[data-dash]"); if (!b) return;
+  const k = b.dataset.dash;
+  if (k === "profile") { $("#dash").close(); return openProfile(); }
+  if (k === "status") return showFiltered({claim: "mine", sales: [b.dataset.status], sort: "follow_up"});
+  if (k === "show") return showFiltered({list_id: b.dataset.list});
+  if (k === "open") { $("#dash").close(); return select(+b.dataset.id, true); }
+  if (k === "archive") {
+    try { await api(`/api/crm/lists/${b.dataset.list}`, {method: "PATCH", json: {archived: b.dataset.archived !== "true"}}); }
+    catch (err) { return toast(err.message); }
+    return openDash();
+  }
+}
+async function onDashSubmit(e) {
+  if (e.target.id !== "newlist") return;
+  e.preventDefault();
+  const f = e.target;
+  try { await api("/api/crm/lists", {method: "POST", json: {name: f.name.value.trim(), kind: f.kind.value}}); toast("List created"); }
+  catch (err) { return toast(err.message); }
+  openDash();
+}
+
+function wireCrm() {
+  $("#detail").addEventListener("click", onSalesClick);
+  $("#detail").addEventListener("change", onSalesChange);
+  $("#detail").addEventListener("submit", onSalesSubmit);
+  $("#profile-form").addEventListener("submit", saveProfile);
+  $("#profile").addEventListener("close", () => profileWaiters.splice(0).forEach(r => r(state.crm.configured)));
+  $("#profile-btn").addEventListener("click", openProfile);
+  $("#sales").addEventListener("click", openDash);
+  $("#dash").addEventListener("click", onDashClick);
+  $("#dash").addEventListener("submit", onDashSubmit);
+  $$("dialog [data-close]").forEach(b => b.addEventListener("click", () => b.closest("dialog").close()));
+}
+
 // ---------------------------------------------------------------- wiring
 function wire() {
   $("#filters").addEventListener("click", onChip);
-  for (const k of ["phone", "email", "sort"]) $(`#${k}`).addEventListener("change", e => { state.filters[k] = e.target.value; refresh(true); });
+  for (const k of ["phone", "email", "sort", ...SALES_SELECTS]) $(`#${k}`).addEventListener("change", e => { state.filters[k] = e.target.value; refresh(true); });
   for (const k of ["lps_min", "bos_min"]) $(`#${k}`).addEventListener("change", e => {
     const v = e.target.value === "" ? "" : Math.max(0, Math.min(100, Number(e.target.value)));
     e.target.value = v; state.filters[k] = v === "" ? "" : String(v); refresh(true);
@@ -344,6 +645,7 @@ function wire() {
     if (e.key === "ArrowUp" && i > 0) { items[i - 1].focus(); e.preventDefault(); }
   });
   $("#detail").addEventListener("click", e => { const b = e.target.closest("[data-copy]"); if (b) copy(b.dataset.copy); });
+  wireCrm();
   $("#theme").addEventListener("change", e => { applyTheme(e.target.value); storage("leadintel.theme", e.target.value); });
   $("#view").addEventListener("change", e => applyView(e.target.value));
   $("#export").addEventListener("click", exportCsv);
@@ -361,6 +663,7 @@ async function main() {
   initMap();
   applyView(storage("leadintel.view") || (window.innerWidth < 900 ? "list" : "split"));
   try { state.options = await api("/api/filters/options"); } catch { state.options = null; }
+  await loadCrm();
   renderFilters();
   await loadCoverage();
   await refresh(false);
