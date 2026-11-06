@@ -360,7 +360,7 @@ phases:
 |---|---|---|
 | M1 | Salesperson interface: shared filter, paging, honest counts, map caption, detail view, exports, themes, Edge app window, security hardening | ✅ accepted (2026-11-06); Windows check pending |
 | M2 | Local CRM: claims, pipeline, notes / contact history, follow-ups, lists / campaigns, overview. Database-restricted write path (D20). Covers part of Phase 4 | ✅ implemented; Windows check pending |
-| M3 | **Search Area (D14)**, then website intelligence: secure crawl, measured checks, WQS with calibration, peer benchmarks, evidence viewer, Census revenue prior, saved searches. Covers Phase 2 website analysis and Phase 3 | 📋 designed (research/M3_PREP.md), next |
+| M3 | **Search Area (D14)**, then website intelligence: secure crawl, measured checks, WQS with calibration, peer benchmarks, evidence viewer, Census revenue prior, saved searches. Covers Phase 2 website analysis and Phase 3 | 🔶 largely done (2026-11-06): Search Area, secure crawl, checks, WQS (provisional), benchmarks, audit report, saved searches; open: calibration labels, Census revenue prior, BOS/LPS website inputs, Windows check (see DELIVERY_STATUS.md) |
 | M4–M6 | Remaining Phase 3–5 scope (competitor analysis, campaigns and outreach via `mailto:`, business performance and outcome learning), sequenced after M3 | 📋 planned |
 
 M3 order (research/M3_PREP.md §8):

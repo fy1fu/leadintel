@@ -216,6 +216,17 @@ confidence = f(criteria coverage, association confidence, crawl completeness, as
 - With the `none` AI provider, subjective criteria are "not assessed".
 - Interpretation bands (initial): 90+ excellent · 80–89 very good · 70–79 good · 60–69 average · 40–59 below average · 20–39 poor · < 20 severely deficient.
 
+**Implemented as `wqs-1.0` (M3, `backend/app/scoring/wqs.py`), a deliberately simpler first version:**
+- criteria are pass / fail / not assessed (no rubric yet); measured weight 1.0, heuristic 0.5;
+- dimension weights: visual 0.15, UX 0.20, effectiveness 0.20, technical 0.15, content 0.10, SEO 0.10, modernity
+  0.10 (starting values, not validated);
+- the same criteria for every industry (no profile-specific `required` / `expected` yet);
+- confidence = weighted share of the criteria that could be assessed (association and agreement terms not yet used);
+  below 0.5 the score is labelled "low confidence";
+- stored per audit and in `score` (kind `wqs`, stage provisional) with one factor per dimension;
+- **provisional** until `leadintel wqs-calibration report` shows Spearman ρ ≥ 0.7 and band agreement ≥ 80 % on
+  ≥ 60 human-rated real websites (`backend/app/scoring/calibration.py`). BOS / LPS do not use WQS yet.
+
 ---
 
 ## 6. Lead Priority Score (LPS)
