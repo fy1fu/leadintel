@@ -4,6 +4,7 @@ Offline and side-effect free: the network-diagnostics service is a stub that onl
 methods are exercised on a test-only route. No database, no network.
 """
 import logging
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -150,7 +151,8 @@ def test_pages_carry_the_token_with_a_nonce_and_are_not_cached(path):
     assert r1.headers["cache-control"] == "no-store" and r1.headers["pragma"] == "no-cache"
     csp1, csp2 = r1.headers["content-security-policy"], r2.headers["content-security-policy"]
     nonce = csp1.split("'nonce-")[1].split("'")[0]
-    assert f'<script nonce="{nonce}">' in r1.text
+    scripts = re.findall(r"<script\b[^>]*>", r1.text)
+    assert scripts and all(f'nonce="{nonce}"' in s for s in scripts), "every script tag carries this response's nonce"
     assert csp1 != csp2, "each page response gets a fresh nonce"
     for directive in ("default-src 'none'", "frame-ancestors 'none'", "object-src 'none'", "base-uri 'none'",
                       "connect-src 'self' https://tiles.openfreemap.org"):
@@ -220,3 +222,25 @@ def test_phone_and_email_links():
     for bad in ("a@b.com?bcc=x@y.com", "javascript:alert(1)@x.com", "no-at-sign", "a@b", "<a@b.com>"):
         assert safe_link("mailto", bad) is None
     assert safe_link("ftp", "https://example.com") is None
+
+
+def test_interface_assets_are_served_without_the_token_and_versioned():
+    c, _ = make()
+    page = c.get("/").text
+    version = re.search(r'/assets/app\.js\?v=([0-9a-f]{12})"', page).group(1)
+    assert f'/assets/app.css?v={version}"' in page and "__ASSET_VERSION__" not in page
+    for name, ctype in (("app.js", "javascript"), ("app.css", "text/css")):
+        r = c.get(f"/assets/{name}?v={version}")
+        assert r.status_code == 200 and ctype in r.headers["content-type"]
+        assert TOKEN not in r.text and "__LEADINTEL_TOKEN__" not in r.text
+        assert r.headers["x-content-type-options"] == "nosniff"
+    assert c.get("/assets/../security.py").status_code == 404
+    assert c.get("/assets/index.html").status_code == 404        # the token-bearing template is not a static file
+
+
+def test_interface_script_only_links_vetted_values():
+    js = (Path(__file__).resolve().parents[1] / "app" / "api" / "static" / "assets" / "app.js").read_text(encoding="utf-8")
+    assert "innerHTML" in js and "esc(" in js
+    assert 'safeWeb = h => (typeof h === "string" && /^https?:\\/\\//i.test(h))' in js
+    assert "safeContact" in js and 'rel="noopener noreferrer"' in js
+    assert "eval(" not in js and "new Function" not in js

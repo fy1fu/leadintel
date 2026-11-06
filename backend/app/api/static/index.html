@@ -4,191 +4,60 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="leadintel-token" content="__LEADINTEL_TOKEN__">
-<title>LeadIntel Prospects</title>
+<title>LeadIntel</title>
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-<style>
-:root{--bg:#f6f6f3;--panel:#fff;--fg:#1d1d1b;--muted:#6b6a64;--line:#e2e1db;--accent:#1f5fbf;
-  --q-ok:#1e7a46;--q-research:#9a6700;--q-no:#8a8a85;--sel:#d23f31}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#141413;--panel:#1d1d1b;--fg:#ecebe6;--muted:#a3a29b;
-  --line:#33322e;--accent:#6aa0ff;--q-ok:#4cc38a;--q-research:#e2b340;--q-no:#8f8e88;--sel:#ff7a6b}}
-:root[data-theme="dark"]{--bg:#141413;--panel:#1d1d1b;--fg:#ecebe6;--muted:#a3a29b;--line:#33322e;--accent:#6aa0ff;
-  --q-ok:#4cc38a;--q-research:#e2b340;--q-no:#8f8e88;--sel:#ff7a6b}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;height:100vh;display:flex;flex-direction:column}
-header{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
-header h1{font-size:16px;margin:0 12px 0 0}
-select,input,button{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:5px 8px}
-button{cursor:pointer}
-.sub{color:var(--muted);font-size:12px}
-main{flex:1;display:grid;grid-template-columns:340px 1fr 380px;min-height:0}
-#list{overflow:auto;border-right:1px solid var(--line);background:var(--panel)}
-#list .item{padding:9px 14px;border-bottom:1px solid var(--line);cursor:pointer}
-#list .item:hover{background:var(--bg)} #list .item.sel{outline:2px solid var(--sel);outline-offset:-2px}
-.name{font-weight:600} .pill{display:inline-block;font-size:11px;border:1px solid currentColor;border-radius:999px;padding:0 7px;margin-right:4px}
-.q-provisionally_qualified{color:var(--q-ok)} .q-needs_research{color:var(--q-research)} .q-not_qualified{color:var(--q-no)}
-#map{min-height:300px}
-#profile{overflow:auto;border-left:1px solid var(--line);background:var(--panel);padding:14px 16px}
-#profile h2{font-size:16px;margin:0 0 2px} #profile h3{font-size:13px;margin:16px 0 6px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
-table{border-collapse:collapse;width:100%;font-size:12.5px} td,th{text-align:left;padding:3px 4px;border-bottom:1px solid var(--line);vertical-align:top}
-.num{font-variant-numeric:tabular-nums;text-align:right}
-.banner{padding:8px 16px;font-size:12.5px;background:var(--bg);border-bottom:1px solid var(--line)}
-@media (max-width:900px){body{height:auto;min-height:100vh}main{grid-template-columns:1fr;grid-template-rows:300px 45vh auto}
-  #map{order:-1;height:300px;min-height:0}#list,#profile{border:0;border-top:1px solid var(--line);overflow:auto}#profile{min-height:40vh}}
-</style>
+<link rel="stylesheet" href="/assets/app.css?v=__ASSET_VERSION__">
 </head>
 <body>
-<header>
-  <h1>LeadIntel</h1>
-  <select id="county"><option value="">All target counties</option><option value="duval">Duval</option><option value="st_johns">St. Johns</option><option value="clay">Clay</option></select>
-  <select id="niche"><option value="">All niches</option><option>cleaning</option><option>landscaping</option><option>pressure_washing</option><option>home_trades</option><option>mobile_automotive</option><option>marine</option></select>
-  <select id="qual"><option value="provisionally_qualified,needs_research">Candidates</option><option value="provisionally_qualified">Provisionally qualified</option><option value="needs_research">Needs research</option><option value="">All</option></select>
-  <input id="q" type="search" placeholder="Search name" aria-label="Search name">
-  <span class="sub" id="count"></span>
+<header class="topbar">
+  <div class="brand"><span class="logo" aria-hidden="true">◆</span> LeadIntel</div>
+  <label class="search"><span class="sr">Search businesses by name</span>
+    <input id="q" type="search" placeholder="Search businesses…  ( / )" autocomplete="off"></label>
+  <div class="counts" id="counts" aria-live="polite"></div>
+  <div class="actions">
+    <select id="view" aria-label="Layout">
+      <option value="split">List + map</option><option value="list">List only</option><option value="map">Map only</option>
+    </select>
+    <button id="export" class="btn" title="Download the businesses matching these filters as a CSV file">Export CSV</button>
+    <select id="theme" aria-label="Colour theme">
+      <option value="system">Theme: system</option><option value="light">Theme: light</option><option value="dark">Theme: dark</option>
+    </select>
+    <button id="fullscreen" class="btn icon" title="Full screen (F11 or Esc to leave)" aria-label="Full screen">⛶</button>
+  </div>
 </header>
-<div class="banner" id="coverage">Loading coverage…</div>
-<main>
-  <div id="list" role="list"></div>
-  <div id="map" aria-label="Map of prospects"></div>
-  <aside id="profile"><p class="sub">Select a prospect on the map or in the list. Scores are provisional until website research (Phase 2).</p></aside>
-</main>
-<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
-<script nonce="__LEADINTEL_NONCE__">
-const $ = s => document.querySelector(s);
-const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-let items = [], selected = null, noRun = false, map = null, mapReady = false, lastFc = null;
-// The map needs an internet connection (library and tiles); the list and records work without it.
-try {
-  map = new maplibregl.Map({container: "map", style: "https://tiles.openfreemap.org/styles/liberty",
-    center: [-81.6, 30.2], zoom: 9, attributionControl: {compact: true}});
-  map.addControl(new maplibregl.NavigationControl());
-  map.on("load", () => { mapReady = true; if (lastFc) setMapData(lastFc); });
-} catch (e) {
-  map = null;
-  $("#map").innerHTML = '<p class="sub" style="padding:14px">Map unavailable (it needs an internet connection). The list and business records still work.</p>';
-}
-function setMapData(fc) {
-  if (!map || !mapReady) return;
-  if (map.getSource("p")) map.getSource("p").setData(fc); else addLayers(fc);
-}
-
-async function api(path) {
-  const r = await fetch(path);
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
-  return r.json();
-}
-
-async function loadCoverage() {
-  try {
-    const c = await api("/api/coverage/latest");
-    if (!c.run) {
-      noRun = true;
-      $("#coverage").innerHTML = "<strong>No prospect data yet.</strong> Run <strong>Load Data</strong> (Start menu &rsaquo; LeadIntel &rsaquo; Load Data) to download public business data for the target counties, then refresh this page.";
-      return;
-    }
-    // Plain-language status for salespeople; the technical detail stays available on hover (title).
-    const bad = c.coverage.filter(x => x.state !== "complete");
-    const when = c.run.finished_at || c.run.started_at;
-    const date = when ? new Date(when).toLocaleString([], {month: "short", day: "numeric", hour: "numeric", minute: "2-digit"}) : "";
-    const label = {overture: "business listings", sunbiz: "new business registrations (Sunbiz)", dbpr: "licence records"};
-    const missing = [...new Set(bad.map(x => label[x.source] || x.source))];
-    const banner = $("#coverage");
-    banner.title = `Run #${c.run.id} (${c.run.status})` + (bad.length ? "\n" + bad.map(x =>
-      `${x.source}/${x.area}: ${x.state}${x.reason ? " - " + x.reason : ""}`).join("\n") : "");
-    if (c.run.status === "running") {
-      banner.innerHTML = `<strong>Updating data…</strong> (started ${esc(date)}). Refresh this page when it has finished.`;
-    } else if (c.run.status === "failed" || c.run.status === "interrupted") {
-      banner.innerHTML = `The last data update (${esc(date)}) did not finish. Everything loaded before it is kept; ` +
-        `it will be retried at the next data update.`;
-    } else if (!bad.length) {
-      banner.textContent = `Data updated ${date}.`;
-    } else {
-      banner.innerHTML = `Data updated ${esc(date)}. Some ${esc(missing.join(" and "))} could not be loaded ` +
-        `(a data source was busy or unavailable). They will be retried at the next data update.`;
-    }
-  } catch (e) { $("#coverage").textContent = "Coverage unavailable: " + e.message; }
-}
-
-async function load() {
-  const p = new URLSearchParams({limit: 5000});
-  for (const [k, id] of [["county","#county"],["niche","#niche"],["qualification","#qual"],["q","#q"]]) if ($(id).value) p.set(k, $(id).value);
-  try {
-    const d = await api("/api/prospects?" + p);
-    items = d.items;
-    $("#count").textContent = d.count > 1000 ? `${d.count} on map · top 1,000 by LPS listed` : `${d.count} shown`;
-    renderList();
-    const fc = {type: "FeatureCollection", features: items.filter(i => i.lon != null).map(i => ({type: "Feature",
-      geometry: {type: "Point", coordinates: [i.lon, i.lat]}, properties: {id: i.id, q: i.qualification || "none"}}))};
-    lastFc = fc; setMapData(fc);
-  } catch (e) { $("#list").innerHTML = `<p class="sub" style="padding:14px">${esc(e.message)}</p>`; }
-}
-
-function addLayers(fc) {
-  map.addSource("p", {type: "geojson", data: fc, cluster: true, clusterRadius: 40, clusterMaxZoom: 14});
-  map.addLayer({id: "clusters", type: "circle", source: "p", filter: ["has", "point_count"],
-    paint: {"circle-color": css("--accent"), "circle-opacity": .75, "circle-radius": ["step", ["get", "point_count"], 14, 50, 20, 250, 28]}});
-  map.addLayer({id: "cluster-count", type: "symbol", source: "p", filter: ["has", "point_count"],
-    layout: {"text-field": "{point_count_abbreviated}", "text-size": 12, "text-font": ["Noto Sans Regular"]}, paint: {"text-color": "#fff"}});
-  map.addLayer({id: "pts", type: "circle", source: "p", filter: ["!", ["has", "point_count"]],
-    paint: {"circle-radius": 6, "circle-stroke-width": 1.5, "circle-stroke-color": "#fff",
-      "circle-color": ["match", ["get", "q"], "provisionally_qualified", css("--q-ok"), "needs_research", css("--q-research"), css("--q-no")]}});
-  map.on("click", "pts", e => select(e.features[0].properties.id, false));
-  map.on("click", "clusters", e => map.easeTo({center: e.features[0].geometry.coordinates, zoom: map.getZoom() + 2}));
-  for (const l of ["pts", "clusters"]) { map.on("mouseenter", l, () => map.getCanvas().style.cursor = "pointer");
-    map.on("mouseleave", l, () => map.getCanvas().style.cursor = ""); }
-}
-
-function renderList() {
-  $("#list").innerHTML = items.slice(0, 1000).map(i => `<div class="item${i.id === selected ? " sel" : ""}" role="listitem" tabindex="0" data-id="${i.id}">
-    <div class="name">${esc(i.name)}</div>
-    <div class="sub">${esc(i.industry)} · ${esc(i.county)} · LPS ${i.lps ?? "–"} · BOS ${i.bos ?? "–"} · evidence ${i.evidence_points ?? "–"}</div>
-    <span class="pill q-${esc(i.qualification)}">${esc((i.qualification || "unscored").replaceAll("_", " "))}</span>
-    ${i.website_listed ? '<span class="pill">website listed</span>' : '<span class="pill">no website listed</span>'}
-    ${i.has_phone ? '<span class="pill">phone</span>' : ""}</div>`).join("") || (noRun
-      ? '<p class="sub" style="padding:14px"><strong>No prospect data yet.</strong><br>Run <strong>Load Data</strong> from the Start menu (LeadIntel folder), then refresh this page.</p>'
-      : '<p class="sub" style="padding:14px">No prospects match these filters.</p>');
-  for (const el of document.querySelectorAll("#list .item")) {
-    el.onclick = () => select(+el.dataset.id, true);
-    el.onkeydown = e => { if (e.key === "Enter") select(+el.dataset.id, true); };
-  }
-}
-
-async function select(id, fly) {
-  selected = id; renderList();
-  const it = items.find(i => i.id === id);
-  if (fly && map && it && it.lon != null) map.flyTo({center: [it.lon, it.lat], zoom: 15});
-  const el = document.querySelector(`#list .item[data-id="${id}"]`); if (el && !fly) el.scrollIntoView({block: "nearest"});
-  try { renderProfile(await api(`/api/prospects/${id}`)); } catch (e) { $("#profile").textContent = e.message; }
-}
-
-function table(rows, cols) {
-  if (!rows || !rows.length) return '<p class="sub">None found in the sources checked.</p>';
-  return `<table><tr>${cols.map(c => `<th>${esc(c[0])}</th>`).join("")}</tr>` + rows.map(r =>
-    `<tr>${cols.map(c => `<td class="${c[2] || ""}">${esc(typeof c[1] === "function" ? c[1](r) : r[c[1]])}</td>`).join("")}</tr>`).join("") + "</table>";
-}
-
-function renderProfile(p) {
-  const L = p.location, bos = p.scores.find(s => s.kind === "bos"), lps = p.scores.find(s => s.kind === "lps");
-  const q = p.qualification;
-  $("#profile").innerHTML = `<h2>${esc(L.display_name)}</h2>
-    <div class="sub">${esc(L.industry_profile || "unclassified")} · ${esc(L.category || "")} · status ${esc(L.operating_status)}</div>
-    <p><span class="pill q-${esc(q?.status)}">${esc((q?.status || "unscored").replaceAll("_", " "))}</span>
-       LPS <strong>${lps?.value ?? "–"}</strong> · BOS <strong>${bos?.value ?? "–"}</strong>
-       <span class="sub">(${esc(bos?.stage || "")}${bos?.caps_applied?.length ? ", capped: " + esc(bos.caps_applied.join(", ")) : ""})</span></p>
-    <div class="sub">${esc((q?.reasons || []).join("; "))}</div>
-    <h3>Contacts</h3>${table(p.contacts, [["Type","kind"],["Value","display"],["Verification","verification_state"],["Source","source_key"]])}
-    <h3>Online presence</h3>${table(p.online_profiles, [["Kind","platform_kind"],["Platform","platform"],["URL","url"]])}
-    <h3>Addresses</h3>${table(p.addresses, [["Role","role"],["Address", r => [r.line1, r.city, r.zip5].filter(Boolean).join(", ")],["Geocode","geocode_method"]])}
-    <h3>Registry</h3>${table(p.organizations, [["Kind","filing_kind"],["Document","document_number"],["Filed","registration_date"],["Role","role"],["Status","status"]])}
-    <h3>Score factors (BOS)</h3>${table(bos?.factors, [["Component","component"],["Factor","factor"],["Effect","effect","num"]])}
-    <h3>Keyword hits</h3>${table(p.keyword_hits, [["Group","group"],["Matched","matched_text"],["Effect", r => r.neutralized ? "neutralized" : r.effect]])}
-    <h3>Sources</h3>${table(p.sources, [["Source","source_key"],["Record","external_id"],["File","file"],["Line","line_no"]])}
-    <p class="sub">Every value above was imported from the listed sources and is <em>not verified</em> unless its state says so.</p>`;
-}
-
-let t; for (const id of ["#county","#niche","#qual"]) $(id).onchange = load;
-$("#q").oninput = () => { clearTimeout(t); t = setTimeout(load, 300); };
-loadCoverage().finally(load);
-</script>
+<div class="banner" id="coverage" role="status">Loading…</div>
+<div class="layout" id="layout" data-view="split">
+  <aside class="filters" id="filters" aria-label="Filters">
+    <div class="filters-head"><h2>Filters</h2><button id="clear" class="link">Clear all</button></div>
+    <div class="fgroup"><h3>Sort by</h3>
+      <select id="sort"><option value="lps">Lead priority (LPS)</option><option value="bos">Business opportunity (BOS)</option><option value="name">Name</option></select></div>
+    <div class="fgroup"><h3>County</h3><div class="chips" data-key="county" id="f-county"></div></div>
+    <div class="fgroup"><h3>Niche</h3><div class="chips" data-key="niche" id="f-niche"></div></div>
+    <div class="fgroup"><h3>Qualification</h3><div class="chips" data-key="qualification" id="f-qualification"></div></div>
+    <div class="fgroup"><h3>Website</h3><div class="chips" data-key="website" id="f-website"></div>
+      <p class="hint">"No website recorded" means none in the sources checked so far; the website search has not run yet.</p></div>
+    <div class="fgroup"><h3>Operating status</h3><div class="chips" data-key="operating" id="f-operating"></div></div>
+    <div class="fgroup"><h3>Contact listed</h3>
+      <label class="row">Phone <select id="phone"><option value="">Any</option><option value="true">Listed</option><option value="false">None listed</option></select></label>
+      <label class="row">Email <select id="email"><option value="">Any</option><option value="true">Listed</option><option value="false">None listed</option></select></label>
+      <p class="hint">Listed in a source, not verified.</p></div>
+    <div class="fgroup"><h3>Minimum scores</h3>
+      <label class="row">LPS ≥ <input id="lps_min" type="number" min="0" max="100" step="5" inputmode="numeric"></label>
+      <label class="row">BOS ≥ <input id="bos_min" type="number" min="0" max="100" step="5" inputmode="numeric"></label></div>
+  </aside>
+  <section class="results" aria-label="Prospects">
+    <div id="list" class="list" role="listbox" aria-label="Prospect list" tabindex="-1"></div>
+    <nav class="pager" aria-label="Pages"><button id="prev" class="btn">‹ Previous</button><span id="pageinfo"></span><button id="next" class="btn">Next ›</button></nav>
+  </section>
+  <section class="mapwrap" aria-label="Map">
+    <div id="map"></div>
+    <div class="mapcaption" id="mapcaption" aria-live="polite"></div>
+  </section>
+  <aside class="detail" id="detail" aria-label="Business details" tabindex="-1">
+    <p class="muted pad">Select a business to see its details.</p>
+  </aside>
+</div>
+<script nonce="__LEADINTEL_NONCE__" src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script nonce="__LEADINTEL_NONCE__" src="/assets/app.js?v=__ASSET_VERSION__"></script>
 </body>
 </html>

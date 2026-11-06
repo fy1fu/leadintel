@@ -1,11 +1,13 @@
 """FastAPI application (network diagnostics endpoints for now)."""
 from __future__ import annotations
 
+import hashlib
 import html
 
 from fastapi import FastAPI, Query
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.api.security import (ALLOWED_HOSTS, NONCE_PLACEHOLDER, TOKEN_PLACEHOLDER, LocalRequestGuard, csp, new_token,
@@ -22,13 +24,18 @@ def create_app(ctx: NetContext | None = None, *, token: str | None = None) -> Fa
 
     from app.api.business import router as business_router
     app.include_router(business_router)
-    index = Path(__file__).parent / "static" / "index.html"
+    static = Path(__file__).parent / "static"
+    index = static / "index.html"
+    # Interface assets (CSS/JS). Their URLs carry a content hash, so an update never leaves a stale cached copy.
+    assets = static / "assets"
+    asset_version = hashlib.sha256(b"".join(p.read_bytes() for p in sorted(assets.glob("*")) if p.is_file())).hexdigest()[:12]
+    app.mount("/assets", StaticFiles(directory=assets), name="assets")
     # Middleware added last runs first: Host validation, then the unsafe-request guard.
     app.add_middleware(LocalRequestGuard, token=app.state.token)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 
     def page(html: str) -> HTMLResponse:
-        body, nonce = render_page(html, app.state.token)
+        body, nonce = render_page(html.replace("__ASSET_VERSION__", asset_version), app.state.token)
         return HTMLResponse(body, headers={"Content-Security-Policy": csp(nonce)})
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
