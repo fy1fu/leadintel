@@ -54,10 +54,11 @@ const safeWeb = h => (typeof h === "string" && /^https?:\/\//i.test(h)) ? h : nu
 const safeContact = h => (typeof h === "string" && /^(tel:\+?[0-9]+|mailto:[^?#\s]+)$/i.test(h)) ? h : null;
 
 // ---------------------------------------------------------------- filter state <-> URL
-function query(extra = {}) {
+function query(extra = {}, {area = true} = {}) {
   const p = new URLSearchParams();
   for (const k of MULTI) if (state.filters[k]?.length) p.set(k, state.filters[k].join(","));
   for (const k of SINGLE) if (state.filters[k] !== undefined && state.filters[k] !== "") p.set(k, state.filters[k]);
+  if (area) for (const [k, v] of Object.entries(areaParams())) p.set(k, v);   // every API request carries the area
   for (const [k, v] of Object.entries(extra)) p.set(k, v);
   return p.toString();
 }
@@ -70,13 +71,24 @@ function readHash() {
   state.filters = f;
   state.page = Math.max(1, parseInt(h.get("page") || "1", 10) || 1);
   state.selected = h.has("id") ? parseInt(h.get("id"), 10) : null;
+  const near = (h.get("near") || "").split(",").map(Number), a = {lat: near[0], lon: near[1], r: roundM(Number(h.get("r"))),
+    unit: h.get("ru") === "km" ? "km" : "mi", label: (h.get("nl") || "").slice(0, 120)};
+  state.area = h.has("near") && near.length === 2 && areaValid(a) ? a : null;   // an invalid area in a URL is ignored
+  if (!state.area && f.sort === "distance") delete f.sort;
 }
-function writeHash() {
-  const p = new URLSearchParams(query());
+function writeHash(push = false) {
+  const p = new URLSearchParams(query({}, {area: false}));
+  const a = state.area;
+  if (a) {
+    p.set("near", `${a.lat},${a.lon}`); p.set("r", String(a.r)); p.set("ru", a.unit);   // r is already exact to 0.01 m
+    if (a.label) p.set("nl", a.label);
+  }
   if (state.page > 1) p.set("page", state.page);
   if (state.selected) p.set("id", state.selected);
   if (!p.toString()) p.set("all", "1");                         // an explicit "no filters" view
-  history.replaceState(null, "", "#" + p.toString());
+  const next = "#" + p.toString();
+  if (next === location.hash) return;
+  if (push) history.pushState(null, "", next); else history.replaceState(null, "", next);   // push: Back undoes it
 }
 
 // ---------------------------------------------------------------- filter panel
@@ -119,14 +131,15 @@ async function refresh(resetPage) {
       api(`/api/prospects?${query({page: state.page, page_size: PAGE_SIZE})}`),
       api(`/api/prospects/summary?${query()}`)]);
     if (seq !== state.seq) return;
-    state.items = d.items; state.loaded = true;
-    renderList(d, s);
+    state.items = d.items; state.loaded = true; state.lastList = {d, s};
+    renderList(d, s); renderAreaCounts();
     if (state.view !== "list") loadPoints(seq);
     if (state.selected && !d.items.some(i => i.id === state.selected)) select(state.selected, false);
   } catch (e) {
     if (seq !== state.seq) return;
     $("#list").innerHTML = `<div class="state"><strong>Could not load prospects.</strong><br>${esc(e.message)}</div>`;
     $("#counts").textContent = ""; $("#pageinfo").textContent = "";
+    if (state.area) $("#area-count").textContent = "Could not count the businesses in this area.";
   }
 }
 async function loadPoints(seq) {
@@ -146,7 +159,9 @@ function itemHtml(i) {
     <div class="meta">${esc(human(i.industry))} · ${esc(countyName(i.county))} · BOS ${esc(i.bos ?? "–")}</div>
     <div class="tags"><span class="tag q-${esc(q)}">${esc(LABELS.qualification[q] || human(q))}</span>
       <span class="tag">${esc(web)}</span>${i.has_phone ? '<span class="tag">Phone listed</span>' : ""}${i.has_email ? '<span class="tag">Email listed</span>' : ""}
-      ${i.operating_status && i.operating_status !== "open" ? `<span class="tag">${esc(human(i.operating_status))}</span>` : ""}${salesTags(i)}</div>
+      ${i.operating_status && i.operating_status !== "open" ? `<span class="tag">${esc(human(i.operating_status))}</span>` : ""}${salesTags(i)}${
+      i.distance_m != null ? `<span class="tag dist" title="Distance from the search-area center">${esc(fmtDist(i.distance_m))}</span>` : ""}${
+      i.approximate_location ? '<span class="tag" title="Location known only to ZIP-code level">Approximate location</span>' : ""}</div>
   </button>`;
 }
 function renderList(d, s) {
@@ -155,22 +170,30 @@ function renderList(d, s) {
   $("#pageinfo").textContent = d.total ? `Page ${fmt(state.page)} of ${fmt(d.pages)}` : "";
   $("#prev").disabled = state.page <= 1; $("#next").disabled = !d.has_more;
   if (!d.items.length) {
-    $("#list").innerHTML = noData
+    const areaMsg = state.area && `<div class="state"><strong>No businesses match these filters inside this search area.</strong><br>Try a larger radius, or <button class="link" id="area-x2">remove the search area</button>.${s?.area?.excluded_no_location ? `<br>${fmt(s.area.excluded_no_location)} matching businesses have no location and cannot be placed in an area.` : ""}</div>`;
+    $("#list").innerHTML = areaMsg || (noData
       ? '<div class="state"><strong>No prospect data yet.</strong><br>Run <strong>Load Data</strong> from the Start menu (LeadIntel folder), then refresh this page.</div>'
-      : '<div class="state"><strong>No businesses match these filters.</strong><br><button class="link" id="clear2">Clear all filters</button></div>';
+      : '<div class="state"><strong>No businesses match these filters.</strong><br><button class="link" id="clear2">Clear all filters</button></div>');
     $("#clear2")?.addEventListener("click", clearFilters);
+    $("#area-x2")?.addEventListener("click", () => setArea(null));
   } else {
     $("#list").innerHTML = d.items.map(itemHtml).join("");
   }
   state.summary = s;
 }
-function clearFilters() { state.filters = {}; renderFilters(); refresh(true); }
+function clearFilters() {                                     // Clear all also removes the search area
+  state.filters = {};
+  if (state.area) { state.area = null; syncAreaOnMap(); renderArea(); }
+  renderFilters(); writeHash(true); refresh(true);
+}
 
 // ---------------------------------------------------------------- map
 function drawMap() {
   const p = mapData; if (!p) return;
   const missing = p.without_coordinates ? ` · ${fmt(p.without_coordinates)} have no location` : "";
-  $("#mapcaption").textContent = `Map: ${fmt(p.returned)} of ${fmt(p.total)} matching businesses${missing}` +
+  const inside = state.area ? " inside the search area" : "";
+  const excl = p.area?.excluded_no_location ? ` · ${fmt(p.area.excluded_no_location)} without a location not included` : "";
+  $("#mapcaption").textContent = `Map: ${fmt(p.returned)} of ${fmt(p.total)} matching businesses${inside}${state.area ? excl : missing}` +
     (p.truncated ? ` · limited to ${fmt(p.limit)} points, refine the filters` : "");
   if (!map || !mapReady) return;
   const fc = {type: "FeatureCollection", features: p.points.map(([id, lon, lat, q]) => ({type: "Feature",
@@ -185,8 +208,8 @@ function drawMap() {
   map.addLayer({id: "pts", type: "circle", source: "p", filter: ["!", ["has", "point_count"]],
     paint: {"circle-radius": 6, "circle-stroke-width": 1.5, "circle-stroke-color": "#fff",
       "circle-color": ["match", ["get", "q"], "provisionally_qualified", css("--good"), "needs_research", css("--warn"), css("--none")]}});
-  map.on("click", "pts", e => select(e.features[0].properties.id, false));
-  map.on("click", "clusters", e => map.easeTo({center: e.features[0].geometry.coordinates, zoom: map.getZoom() + 2}));
+  map.on("click", "pts", e => { if (!areaPicking) select(e.features[0].properties.id, false); });
+  map.on("click", "clusters", e => { if (!areaPicking) map.easeTo({center: e.features[0].geometry.coordinates, zoom: map.getZoom() + 2}); });
   for (const l of ["pts", "clusters"]) {
     map.on("mouseenter", l, () => map.getCanvas().style.cursor = "pointer");
     map.on("mouseleave", l, () => map.getCanvas().style.cursor = "");
@@ -197,7 +220,8 @@ function initMap() {
     map = new maplibregl.Map({container: "map", style: "https://tiles.openfreemap.org/styles/liberty",
       center: [-81.6, 30.2], zoom: 9, attributionControl: {compact: true}});
     map.addControl(new maplibregl.NavigationControl());
-    map.on("load", () => { mapReady = true; drawMap(); });
+    map.on("load", () => { mapReady = true; drawMap(); syncAreaOnMap({fit: true}); });
+    map.on("click", onMapClickForArea);                       // only acts while "Pick on map" is on; panning never moves the center
     map.on("error", e => { if (!mapReady) $("#mapcaption").textContent = "Map could not load (it needs an internet connection). The list and records still work."; });
   } catch {
     map = null;
@@ -631,6 +655,207 @@ function wireCrm() {
   $$("dialog [data-close]").forEach(b => b.addEventListener("click", () => b.closest("dialog").close()));
 }
 
+// ---------------------------------------------------------------- search area (M3, PLAN.md §14.2)
+// The area is kept apart from the other filters: changing it never resets them. It is part of every request
+// (query()), so the list, counts, summary, map points and export all use it. The circle is ALWAYS the server's
+// (/api/geo/circle): nothing here computes a boundary of its own.
+const AREA_UNIT_M = {mi: 1609.344, km: 1000};
+// One canonical range in metres (same as the server: 400 m to 100 mi); each unit's limits are derived from it.
+const AREA_MIN_M = 400, AREA_MAX_M = 100 * 1609.344, AREA_DEFAULT_M = 10 * 1609.344;
+const areaLimits = u => [AREA_MIN_M / AREA_UNIT_M[u], AREA_MAX_M / AREA_UNIT_M[u]];
+const fmtLimit = v => String(+v.toFixed(2));          // display only: 0.25–100 mi, 0.4–160.93 km
+const MAP_START = [-81.6, 30.2];
+let areaMarker = null, areaPicking = false, areaSeq = 0, areaCircle = null, areaCircleError = "", areaCommitTimer = null;
+
+function areaValid(a) {
+  return a && [a.lat, a.lon, a.r].every(Number.isFinite) && Math.abs(a.lat) <= 85 && Math.abs(a.lon) <= 180 &&
+    a.r >= AREA_MIN_M && a.r <= AREA_MAX_M + 1e-6 && (a.unit === "mi" || a.unit === "km");
+}
+function areaParams() {
+  const a = state.area;
+  return a ? {near_lat: a.lat, near_lon: a.lon, radius: a.r / AREA_UNIT_M[a.unit], unit: a.unit} : {};
+}
+function fmtRadius(m, unit) {
+  const v = m / AREA_UNIT_M[unit];
+  return `${v >= 10 ? Math.round(v * 10) / 10 : Math.round(v * 100) / 100} ${unit}`;
+}
+function fmtDist(m) {
+  const unit = state.area?.unit || "mi", v = m / AREA_UNIT_M[unit];
+  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${unit}`;
+}
+const roundM = m => Math.round(m * 100) / 100;   // radius kept to 0.01 m: state, URL and server always agree exactly
+const sliderToM = v => AREA_MIN_M * Math.pow(AREA_MAX_M / AREA_MIN_M, v / 1000);
+const mToSlider = m => Math.round(1000 * Math.log(m / AREA_MIN_M) / Math.log(AREA_MAX_M / AREA_MIN_M));
+
+function renderArea() {
+  const a = state.area, on = !!a;
+  $("#area-off").hidden = on; $("#area-panel").hidden = !on; $("#areachip").hidden = !on;
+  $$("#sort [data-area]").forEach(o => o.hidden = !on);
+  if (!on) { setPicking(false); return; }
+  $("#area-label").textContent = `Center: ${a.label || `${a.lat.toFixed(4)}, ${a.lon.toFixed(4)}`}`;
+  $("#area-unit").value = a.unit;
+  const [lo, hi] = areaLimits(a.unit);
+  const num = $("#area-num");
+  num.min = lo; num.max = hi; num.step = "any";      // exact derived limits: a valid radius is never shown as invalid
+  if (document.activeElement !== num) num.value = +(a.r / AREA_UNIT_M[a.unit]).toFixed(2);
+  $("#area-slider").value = mToSlider(a.r);
+  $("#area-limits").textContent = `${fmtLimit(lo)}–${fmtLimit(hi)} ${a.unit}`;
+  renderAreaCounts();
+}
+function renderAreaCounts() {
+  const a = state.area; if (!a) return;
+  const s = state.summary, total = s?.total;
+  const excluded = s?.area?.excluded_no_location || 0;
+  $("#area-count").textContent = total == null ? "Counting…" :
+    `${fmt(total)} business${total === 1 ? "" : "es"} inside` + (excluded ? ` · ${fmt(excluded)} matching without a location are not included` : "");
+  $("#areachip-text").textContent = `Within ${fmtRadius(a.r, a.unit)} of ${a.label || "the chosen point"}` +
+    (total == null ? "" : ` · ${fmt(total)}`);
+  $("#areachip").title = $("#areachip-text").textContent;
+  const notes = [];
+  if (areaCircleError) notes.push(areaCircleError);
+  if (areaCircle?.beyond_target_counties) notes.push("Part of this area is outside the counties LeadIntel has data for.");
+  $("#area-note").textContent = notes.join(" ");
+}
+
+// One entry point for every area change. push: a new browser-history entry (Back returns to the previous area).
+function setArea(next, {push = true, fit = false, reload = true} = {}) {
+  if (next) next = {...next, r: roundM(next.r)};
+  if (next && !areaValid(next)) { toast("That search area is not valid"); return; }
+  state.area = next;
+  if (!next && state.filters.sort === "distance") state.filters.sort = "";
+  writeHash(push);
+  renderArea(); renderFilters();
+  syncAreaOnMap({fit});
+  if (reload) refresh(true);
+}
+function enableArea() {
+  let lon = MAP_START[0], lat = MAP_START[1], label = "Map center";
+  if (map && mapReady) { const c = map.getCenter(); lon = c.lng; lat = c.lat; }
+  else { const pos = selectedPosition(); if (pos) { [lon, lat] = pos.ll; label = pos.name; } else label = "Starting point"; }
+  setArea({lat: +lat.toFixed(6), lon: +wrapLon(lon).toFixed(6), r: AREA_DEFAULT_M, unit: "mi", label}, {fit: true});
+}
+const wrapLon = lon => ((lon + 540) % 360) - 180;
+function selectedPosition() {
+  const id = state.selected; if (!id) return null;
+  const it = state.items.find(i => i.id === id && i.lon != null);
+  if (it) return {ll: [it.lon, it.lat], name: it.name};
+  const pt = mapData?.points?.find(p => p[0] === id);
+  return pt ? {ll: [pt[1], pt[2]], name: `business #${id}`} : null;
+}
+function moveCenter(lon, lat, label) {
+  if (!state.area) return;
+  setArea({...state.area, lat: +lat.toFixed(6), lon: +wrapLon(lon).toFixed(6), label}, {fit: false});
+}
+function commitRadius(m, delay = 0) {
+  if (!state.area) return;
+  const r = Math.min(AREA_MAX_M, Math.max(AREA_MIN_M, m));
+  clearTimeout(areaCommitTimer);
+  areaCommitTimer = setTimeout(() => setArea({...state.area, r}), delay);
+}
+function setPicking(on) {
+  areaPicking = !!on && !!state.area;
+  $("#area-pick").setAttribute("aria-pressed", areaPicking);
+  $("#area-pick").textContent = areaPicking ? "Click the map… (Esc)" : "Pick on map";
+  document.querySelector(".mapwrap")?.classList.toggle("picking", areaPicking);
+}
+
+// ---- map side: marker and server circle
+function syncAreaOnMap({fit = false} = {}) {
+  if (!map || !mapReady) return;
+  const a = state.area;
+  if (!a) {
+    areaMarker?.remove(); areaMarker = null; areaCircle = null; areaCircleError = ""; ++areaSeq;
+    if (map.getLayer("area-line")) { map.removeLayer("area-line"); map.removeLayer("area-fill"); }
+    if (map.getSource("area")) map.removeSource("area");
+    return;
+  }
+  if (!areaMarker) {
+    const el = document.createElement("div");
+    el.className = "area-center-marker"; el.title = "Search-area center (drag to move)";
+    areaMarker = new maplibregl.Marker({element: el, draggable: true}).setLngLat([a.lon, a.lat]).addTo(map);
+    areaMarker.on("dragstart", () => { if (map.getLayer("area-fill")) { map.setPaintProperty("area-fill", "fill-opacity", 0.03); map.setPaintProperty("area-line", "line-opacity", 0.35); } });
+    areaMarker.on("dragend", () => { const p = areaMarker.getLngLat(); moveCenter(p.lng, p.lat, "Dropped pin"); });
+  } else areaMarker.setLngLat([a.lon, a.lat]);
+  loadCircle(fit);
+}
+async function loadCircle(fit) {
+  const seq = ++areaSeq, a = state.area;
+  try {
+    const c = await api(`/api/geo/circle?${new URLSearchParams(areaParams())}`);
+    if (seq !== areaSeq || !state.area) return;                 // a newer center or radius superseded this answer
+    areaCircle = c; areaCircleError = ""; renderAreaCounts();
+    const data = {type: "Feature", geometry: c.geometry, properties: {}};
+    const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+    if (map.getSource("area")) map.getSource("area").setData(data);
+    else {
+      map.addSource("area", {type: "geojson", data});
+      const before = map.getLayer("clusters") ? "clusters" : undefined;   // points stay above the circle
+      map.addLayer({id: "area-fill", type: "fill", source: "area", paint: {"fill-color": css("--sel"), "fill-opacity": 0.07}}, before);
+      map.addLayer({id: "area-line", type: "line", source: "area", paint: {"line-color": css("--sel"), "line-width": 2, "line-opacity": 0.9}}, before);
+    }
+    map.setPaintProperty("area-fill", "fill-opacity", 0.07); map.setPaintProperty("area-line", "line-opacity", 0.9);
+    if (fit) {
+      const xs = c.geometry.coordinates[0].map(p => p[0]), ys = c.geometry.coordinates[0].map(p => p[1]);
+      map.fitBounds([[Math.min(...xs), Math.min(...ys)], [Math.max(...xs), Math.max(...ys)]], {padding: 40, duration: 0});
+    }
+  } catch (e) {
+    if (seq !== areaSeq) return;
+    areaCircle = null;
+    areaCircleError = "The area outline could not be drawn (" + e.message + "); the results still use the area.";
+    if (map.getLayer("area-fill")) { map.setPaintProperty("area-fill", "fill-opacity", 0); map.setPaintProperty("area-line", "line-opacity", 0); }
+    renderAreaCounts();
+  }
+}
+function onMapClickForArea(e) {
+  if (!areaPicking || !state.area) return;
+  setPicking(false);
+  moveCenter(e.lngLat.lng, e.lngLat.lat, "Picked on map");
+}
+
+function wireArea() {
+  $("#area-on").addEventListener("click", enableArea);
+  $("#area-remove").addEventListener("click", () => setArea(null));
+  $("#areachip-x").addEventListener("click", () => setArea(null));
+  $("#area-pick").addEventListener("click", () => {
+    if (!map || !mapReady) { toast("The map is not available - use “Selected business” instead"); return; }
+    setPicking(!areaPicking);
+  });
+  $("#area-here").addEventListener("click", () => {
+    const pos = selectedPosition();
+    if (!pos) { toast(state.selected ? "This business has no location on the map" : "Open a business first"); return; }
+    moveCenter(pos.ll[0], pos.ll[1], pos.name);
+  });
+  const slider = $("#area-slider"), num = $("#area-num");
+  slider.addEventListener("input", () => {                   // live preview of the number; the search waits for release
+    const m = sliderToM(+slider.value), u = state.area.unit;
+    num.value = +(m / AREA_UNIT_M[u]).toFixed(2);
+    $("#areachip-text").textContent = `Within ${fmtRadius(m, u)} of ${state.area.label || "the chosen point"}`;
+  });
+  slider.addEventListener("change", () => commitRadius(sliderToM(+slider.value), 150));
+  num.addEventListener("change", () => {
+    const u = state.area.unit, v = parseFloat(num.value);
+    if (!Number.isFinite(v)) { renderArea(); return; }
+    let m = v * AREA_UNIT_M[u];                           // clamped only in metres, only when typed outside the range
+    if (m < AREA_MIN_M - 1e-6 || m > AREA_MAX_M + 1e-6) {
+      m = Math.min(AREA_MAX_M, Math.max(AREA_MIN_M, m));
+      const [lo, hi] = areaLimits(u);
+      toast(`Radius limited to ${fmtLimit(lo)}–${fmtLimit(hi)} ${u}`);
+      num.value = +(m / AREA_UNIT_M[u]).toFixed(2);
+    }
+    commitRadius(m);
+  });
+  $("#area-unit").addEventListener("change", e => {          // display only: the radius in metres does not change
+    state.area = {...state.area, unit: e.target.value};
+    writeHash(false); renderArea();
+    if (state.lastList) renderList(state.lastList.d, state.lastList.s);
+  });
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && areaPicking) setPicking(false); });
+  window.addEventListener("popstate", () => {                // Back / Forward: restore exactly what the URL says
+    readHash(); renderFilters(); renderArea(); syncAreaOnMap({fit: false}); refresh(false);
+    if (state.selected) select(state.selected, false); else $("#detail").innerHTML = '<p class="muted pad">Select a business to see its details.</p>';
+  });
+}
+
 // ---------------------------------------------------------------- wiring
 function wire() {
   $("#filters").addEventListener("click", onChip);
@@ -651,6 +876,7 @@ function wire() {
   });
   $("#detail").addEventListener("click", e => { const b = e.target.closest("[data-copy]"); if (b) copy(b.dataset.copy); });
   wireCrm();
+  wireArea();
   $("#theme").addEventListener("change", e => { applyTheme(e.target.value); storage("leadintel.theme", e.target.value); });
   $("#view").addEventListener("change", e => applyView(e.target.value));
   $("#export").addEventListener("click", exportCsv);
@@ -669,7 +895,7 @@ async function main() {
   applyView(storage("leadintel.view") || (window.innerWidth < 900 ? "list" : "split"));
   try { state.options = await api("/api/filters/options"); } catch { state.options = null; }
   await loadCrm();
-  renderFilters();
+  renderFilters(); renderArea();
   await loadCoverage();
   await refresh(false);
   if (state.selected) select(state.selected, false);

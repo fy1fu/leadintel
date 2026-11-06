@@ -14,6 +14,8 @@
   <label class="search"><span class="sr">Search businesses by name</span>
     <input id="q" type="search" placeholder="Search businesses…  ( / )" autocomplete="off"></label>
   <div class="counts" id="counts" aria-live="polite"></div>
+  <div class="areachip" id="areachip" hidden><span class="dot" aria-hidden="true"></span><span id="areachip-text"></span>
+    <button type="button" id="areachip-x" class="x" title="Remove the search area" aria-label="Remove the search area">✕</button></div>
   <div class="actions">
     <button id="sales" class="btn" hidden title="Your pipeline, follow-ups and recent activity">Sales</button>
     <button id="profile-btn" class="btn icon" hidden title="Your salesperson profile" aria-label="Your salesperson profile">👤</button>
@@ -32,7 +34,24 @@
   <aside class="filters" id="filters" aria-label="Filters">
     <div class="filters-head"><h2>Filters</h2><button id="clear" class="link">Clear all</button></div>
     <div class="fgroup"><h3>Sort by</h3>
-      <select id="sort"><option value="lps">Lead priority (LPS)</option><option value="bos">Business opportunity (BOS)</option><option value="name">Name</option><option value="follow_up" data-crm hidden>Follow-up date</option></select></div>
+      <select id="sort"><option value="lps">Lead priority (LPS)</option><option value="bos">Business opportunity (BOS)</option><option value="name">Name</option><option value="follow_up" data-crm hidden>Follow-up date</option><option value="distance" data-area hidden>Distance from center</option></select></div>
+    <div class="fgroup" id="g-area"><h3>Search area</h3>
+      <div id="area-off">
+        <button type="button" class="btn" id="area-on">Search around a point</button>
+        <p class="hint">Limits every result to a circle (10 miles to start). Move it by dragging its center on the map.</p></div>
+      <div id="area-panel" hidden>
+        <p class="area-label" id="area-label"></p>
+        <div class="area-actions">
+          <button type="button" class="btn" id="area-pick" aria-pressed="false" title="Then click the map where the center should be">Pick on map</button>
+          <button type="button" class="btn" id="area-here" title="Center the area on the business you have open">Selected business</button></div>
+        <label class="row" for="area-num">Radius
+          <span class="area-radius"><input id="area-num" type="number" step="any" inputmode="decimal" aria-label="Radius">
+            <select id="area-unit" aria-label="Radius unit"><option value="mi">mi</option><option value="km">km</option></select></span></label>
+        <input id="area-slider" class="area-slider" type="range" min="0" max="1000" step="1" aria-label="Radius">
+        <p class="hint" id="area-limits"></p>
+        <p class="area-count" id="area-count" aria-live="polite"></p>
+        <p class="hint area-note" id="area-note"></p>
+        <button type="button" class="link" id="area-remove">Remove search area</button></div></div>
     <div class="fgroup" id="g-sales" hidden><h3>Sales</h3>
       <label class="row">Claimed <select id="claim"><option value="">Anyone</option><option value="mine">By me</option><option value="unclaimed">Not claimed</option><option value="others">By others</option><option value="claimed">By anyone</option></select></label>
       <label class="row">Follow-up <select id="follow_up"><option value="">Any time</option><option value="overdue">Overdue</option><option value="today">Today</option><option value="week">Next 7 days</option><option value="any">Has a date</option><option value="none">No date</option></select></label>

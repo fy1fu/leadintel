@@ -43,6 +43,22 @@ Updated: 2026-11-06.
   - the box prefilter loses nothing at 25–60° latitude and 100 mi;
   - 16 kinds of invalid input are refused on 4 endpoints;
   - the circle endpoint matches the geodesic radius within 0.1 %.
+- Search Area frontend: headless walkthrough with the real MapLibre 4.7.1, 97 checks each at 1920×1080, 1440×900
+  and 1366×768. Covered:
+  - off by default;
+  - marker drag versus map panning and zooming;
+  - pick on map;
+  - slider and number synchronised; units; limits;
+  - other filters combined; selection kept;
+  - distance sort; export rows = count shown;
+  - Back, Forward, reload and shared URL;
+  - radius exact to 0.01 m in state, URL and server (10 mi stays 16,093.44 m through reload, units, Back/Forward);
+  - one canonical range in metres (400 m to 160,934.4 m), unit limits derived from it: switching units at either
+    limit never changes or clamps the radius; out-of-range input is clamped in metres only;
+  - stale responses discarded; error, empty and outside-county notes;
+  - no page errors and no CSP violations.
+
+  The M2 CRM walkthrough still passes.
 - Search Area performance (100k synthetic locations, about 4× realistic density; rolled back). Every area query
   uses the GiST index:
   - 5 mi: 8–56 ms;
@@ -99,7 +115,7 @@ Plan, architecture, acceptance tests and decisions: [research/M3_PREP.md](resear
 
 | Step | What | Migration | State |
 |---|---|---|---|
-| 1 | **Search Area** (core feature, [PLAN.md §14](PLAN.md)): off until enabled, then a 10-mile circle with adjustable center (search, map click, marker drag; panning never moves it) and radius (miles/km); server-side PostGIS geodesic filter on the existing index in the shared `ProspectFilter`, so list, counts, map, export and sales filters agree | none | **server done** (filter, validation, distance and sort, exclusion count, export columns, circle endpoint); frontend next |
+| 1 | **Search Area** (core feature, [PLAN.md §14](PLAN.md)): off until enabled, then a 10-mile circle with adjustable center (search, map click, marker drag; panning never moves it) and radius (miles/km); server-side PostGIS geodesic filter on the existing index in the shared `ProspectFilter`, so list, counts, map, export and sales filters agree | none | **server and frontend done** (Area panel and chip, draggable center marker, server circle, slider and number with mi/km, pick-on-map, URL with Back/Forward, stale-response guards); center search next |
 | 2 | Browser egress proxy (SSRF / DNS rebinding) | none | designed |
 | 3 | Crawl runner (robots, rate limits, isolated contexts, screenshots, maintenance lock) | none | designed |
 | 4 | Measured / heuristic checks and axe-core; fixture-site suite | none | designed |
@@ -119,10 +135,5 @@ Decisions recorded 2026-11-06:
 
 1. Your decision on building the M2 TEST ZIP (the previous M2 TEST ZIP, from `03080b3f`, was deleted before the
    security fix and never distributed).
-2. M3 step 1 (Search Area), frontend:
-   - Area panel and chip; center by business search or by map;
-   - draggable marker; slider and number field with mi/km;
-   - circle from `/api/geo/circle`; URL state;
-   - headless walkthrough.
-
-   Then the center search for addresses, ZIP codes and cities (Census gazetteer files and geocoder).
+2. M3 step 1 (Search Area): center search by business, ZIP code, city and address (Census gazetteer files and the
+   free Census geocoder), separate from the radius filter.

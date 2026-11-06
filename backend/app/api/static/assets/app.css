@@ -204,3 +204,29 @@ dialog h3 { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 
 .newlist { display: flex; gap: var(--s2); margin-top: var(--s3); flex-wrap: wrap; }
 .newlist input { flex: 1 1 200px; background: var(--raised); border: 1px solid var(--line); border-radius: var(--r); padding: 6px 8px; }
 @media (max-width: 520px) { .salesform { grid-template-columns: 1fr; } .stats { grid-template-columns: 1fr; } }
+
+/* search area (M3) */
+.areachip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--chip-on-line); background: var(--chip-on);
+  border-radius: 999px; padding: 2px 4px 2px 10px; font-size: var(--fs-s); max-width: 420px; min-width: 0; }
+.areachip[hidden] { display: none; }
+.areachip #areachip-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.areachip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--sel); flex: none; }
+.areachip .x { border: 0; background: none; cursor: pointer; padding: 0 6px; color: var(--muted); font-size: var(--fs-s); }
+.areachip .x:hover { color: var(--fg); }
+.area-label { margin: 0 0 6px; font-size: var(--fs-s); font-weight: 600; overflow-wrap: anywhere; }
+.area-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+.area-actions .btn { font-size: var(--fs-xs); padding: 4px 8px; }
+.area-actions .btn[aria-pressed="true"] { background: var(--chip-on); border-color: var(--chip-on-line); font-weight: 600; }
+.area-radius { display: inline-flex; gap: 4px; }
+.row .area-radius input { width: 76px; }
+.row .area-radius select { width: 58px; }
+.area-slider { width: 100%; accent-color: var(--accent); margin: 4px 0 0; }
+.area-count { margin: 6px 0 0; font-size: var(--fs-s); font-weight: 600; }
+.area-note:empty, .area-count:empty { display: none; }
+.area-note { color: var(--warn); }
+.mapwrap.picking #map canvas { cursor: crosshair !important; }
+.area-center-marker { width: 18px; height: 18px; border-radius: 50%; background: var(--sel); border: 3px solid #fff;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / .35), 0 1px 4px rgb(0 0 0 / .4); cursor: grab; }
+.area-center-marker:active { cursor: grabbing; }
+.tag.dist { color: var(--fg); }
+@media (max-width: 1280px) { .areachip { max-width: 300px; } }
