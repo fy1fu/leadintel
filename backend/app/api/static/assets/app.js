@@ -269,6 +269,7 @@ function topFactors(score, n = 3) {
 }
 function renderDetail(p) {
   const L = p.location, bos = p.scores.find(s => s.kind === "bos"), lps = p.scores.find(s => s.kind === "lps");
+  const wqs = p.scores.find(s => s.kind === "wqs");
   const q = p.qualification, qs = q?.status || "unscored";
   const addr = (p.addresses || []).find(a => a.is_operating_location) || (p.addresses || [])[0];
   const county = state.items.find(i => i.id === L.id)?.county;
@@ -285,8 +286,9 @@ function renderDetail(p) {
       <p>How strongly to pursue this lead now: the opportunity, adjusted for how reachable and well-evidenced it is.</p></div>
     <div class="scorecard"><div class="label">Business opportunity (BOS)</div><div class="big">${esc(bos?.value ?? "–")}</div>
       <p>How attractive this business is as a website customer. ${bos?.stage === "provisional" ? "Provisional: based on listing data until website research runs." : ""}${bos?.caps_applied?.length ? " Capped by: " + esc(bos.caps_applied.join(", ")) + "." : ""}</p>${topFactors(bos)}</div>
-    <div class="scorecard wqs"><div class="label">Website quality (WQS)</div><p>Not analysed yet - website analysis is a later stage. Unknown is not the same as poor.</p></div>
+    <div class="scorecard wqs"><div class="label">Website quality (WQS)</div>${wqsCard(wqs)}</div>
   </div></div>
+  <div class="section audit" id="audit-sec"><h3>Website audit</h3><p class="muted">Loading…</p></div>
   <div class="section"><h3>Why contact</h3>${(q?.reasons || []).length ? `<ul class="reasons">${q.reasons.map(r => `<li>${esc(r)}</li>`).join("")}</ul>` : '<p class="muted">No qualification reasons recorded.</p>'}</div>
   <details class="advanced"><summary>Advanced details (sources, evidence, scoring)</summary>
     <div class="section"><h3>Addresses</h3>${table(p.addresses, [["Role", "role"], ["Address", r => [r.line1, r.line2, r.city, r.state, r.zip5].filter(Boolean).join(", ")], ["Geocode", "geocode_method"], ["Operating", r => r.is_operating_location ? "yes" : (r.not_operating_reason || "no")]])}</div>
@@ -307,8 +309,231 @@ async function select(id, fromList) {
   const it = state.items.find(i => i.id === id);
   if (map && mapReady && it?.lon != null && fromList) map.flyTo({center: [it.lon, it.lat], zoom: 15});
   $("#detail").innerHTML = '<p class="muted pad">Loading…</p>';
-  try { renderDetail(await api(`/api/prospects/${id}`)); if (state.crm.available) loadSales(id); }
+  try { renderDetail(await api(`/api/prospects/${id}`)); loadAudits(id); if (state.crm.available) loadSales(id); }
   catch (e) { $("#detail").innerHTML = `<p class="pad"><strong>Could not load this business.</strong><br>${esc(e.message)}</p>`; }
+}
+
+// ---------------------------------------------------------------- website audit (M3)
+// The audited website is untrusted: nothing from it is executed here, it is never framed, and every value is escaped.
+// Screenshots are our own JPEG copies (served by this app); the live site opens only in the external browser.
+const AUDIT_STATUS = {running: "Running…", completed: "Completed", partial: "Partly completed", failed: "Failed",
+  blocked: "Blocked for safety", robots_disallowed: "Not allowed by the website (robots.txt)",
+  robots_unavailable: "Not crawled: the website's robots.txt could not be read", no_website: "No website", interrupted: "Interrupted"};
+const CRITERIA = {visual_design: "Visual design", https: "Secure connection (https)", no_mixed_content: "Every file loaded securely",
+  page_weight: "Home page size", largest_content_paint: "Main content appears quickly", load_time: "Page load time",
+  viewport_meta: "Set up for phones", no_horizontal_scroll_on_phone: "Fits a phone screen", image_alt_text: "Images described (alt text)",
+  page_language: "Page language declared", form_labels: "Form fields labelled", working_links: "Links work",
+  accessibility_rules: "Accessibility rules (WCAG A/AA)", titles_present: "Pages have titles", titles_unique: "Each page has its own title",
+  meta_description: "Search-result description", single_h1: "One main heading", business_structured_data: "Business details for search engines",
+  click_to_call: "Tap-to-call phone link", contact_form_or_email: "Contact form or email link", enough_text: "Enough text about the services",
+  more_than_one_page: "More than one page", jquery_current: "JavaScript library up to date", cms_current: "Website platform up to date",
+  modern_layout: "Modern layout", recent_copyright_year: "Recently maintained"};
+const audit = {location: null, timer: null, data: null};
+
+function wqsCard(w) {
+  if (!w || w.value == null) return '<p>Not analysed yet. Run a website audit below. Unknown is not the same as poor.</p>';
+  const cv = w.config_versions || {}, conf = w.confidence != null ? Math.round(w.confidence * 100) : null;
+  return `<div class="big">${esc(Math.round(w.value))}</div>
+    <div class="tags"><span class="tag warn" title="The weights have not yet been checked against human ratings">Provisional</span>
+    ${conf != null ? `<span class="tag" title="Share of the checks that could be made">${esc(conf)}% assessed</span>` : ""}
+    <span class="tag">${esc(cv.wqs || "")}</span></div>
+    <p>From the website audit of ${esc(fmtWhen(w.computed_at))}. ${cv.audit_id ? `<button type="button" class="link" data-audit-open="${esc(cv.audit_id)}">Open the audit report</button>` : ""}</p>`;
+}
+async function loadAudits(id) {
+  const sec = $("#audit-sec"); if (!sec) return;
+  try {
+    const [info, st] = await Promise.all([api(`/api/locations/${id}/audits`), api("/api/audits/status")]);
+    if (state.selected !== id) return;
+    const mine = st.running && st.location_id === id;
+    if (audit.watching === id && !mine) {                    // the audit we watched has just finished
+      audit.watching = null;
+      if (st.state === "done") { toast("Website audit finished"); return select(id, false); }
+    }
+    if (mine) audit.watching = id;
+    renderAudits(id, info, st);
+    clearTimeout(audit.timer);
+    if (st.running) audit.timer = setTimeout(() => state.selected === id && loadAudits(id), mine ? 1500 : 4000);
+  } catch (e) { sec.innerHTML = `<h3>Website audit</h3><p class="muted">Audit information unavailable: ${esc(e.message)}</p>`; }
+}
+function auditRow(a) {
+  const w = a.wqs != null ? `<b>${esc(Math.round(a.wqs))}</b>` : '<span class="muted">no score</span>';
+  return `<li><button type="button" class="link" data-audit-open="${esc(a.id)}">${esc(fmtWhen(a.started_at))}</button>
+    <span class="tag st-${esc(a.status)}">${esc(AUDIT_STATUS[a.status] || human(a.status))}</span> ${w}
+    <span class="muted">${esc(a.pages_crawled)} pages</span></li>`;
+}
+function renderAudits(id, info, st) {
+  const sec = $("#audit-sec"), last = info.audits[0];
+  const mine = st.running && st.location_id === id, other = st.running && !mine;
+  let h = "<h3>Website audit</h3>";
+  if (!info.website) h += '<p class="muted">No website is recorded for this business, so there is nothing to audit.</p>';
+  else if (!info.crawler_available) h += '<p class="muted">Website audits need the crawler component, which is not installed in this version of LeadIntel.</p>';
+  else {
+    h += `<p class="muted small">Visits up to 15 pages of <span class="value">${esc(info.website)}</span> politely (robots.txt, one page per second),
+      reads them without typing or sending anything, and takes screenshots. Usually takes under a minute.</p>`;
+    if (mine) h += `<p class="status"><span class="spinner" aria-hidden="true"></span> Audit running… ${esc(Math.round(st.elapsed_s || 0))} s</p>`;
+    else if (other) h += '<p class="muted">Another website audit is running. You can start this one when it has finished.</p>';
+    if (!st.running && st.location_id === id && st.state === "error") h += `<p class="error">${esc(st.message)}</p>`;
+    h += `<button type="button" class="btn ${last ? "" : "primary"}" data-audit-run="${esc(id)}" ${st.running ? "disabled" : ""}>${last ? "Run the audit again" : "Run website audit"}</button>`;
+  }
+  if (last) {
+    h += `<div class="lastaudit"><div><span class="tag st-${esc(last.status)}">${esc(AUDIT_STATUS[last.status] || human(last.status))}</span>
+      <span class="muted">${esc(fmtWhen(last.started_at))}</span></div>
+      ${last.reason ? `<p class="muted small">${esc(last.reason)}</p>` : ""}
+      ${last.status !== "running" ? `<button type="button" class="btn primary" data-audit-open="${esc(last.id)}">Open the audit report</button>` : ""}</div>`;
+    if (info.audits.length > 1) h += `<details><summary>Earlier audits (${info.audits.length - 1})</summary><ul class="audits">${info.audits.slice(1).map(auditRow).join("")}</ul></details>`;
+  }
+  sec.innerHTML = h;
+}
+async function runAudit(id) {
+  try { await api(`/api/locations/${id}/audits`, {method: "POST"}); toast("Website audit started"); }
+  catch (e) { toast(e.message); }
+  loadAudits(id);
+}
+function findingRow(f, label) {
+  return `<li class="finding f-${label}"><div><b>${esc(CRITERIA[f.criterion] || human(f.criterion))}</b>
+    <span class="tag" title="${f.kind === "measured" ? "Measured directly" : "Rule of thumb (counts half)"}">${esc(f.kind)}</span></div>
+    <div class="muted small">${esc(f.evidence)} · <span title="Source">${esc(f.source)}</span></div></li>`;
+}
+function dimensionRows(d) {
+  const prev = d.previous?.dimensions || {};
+  return Object.keys(d.dimension_labels).map(k => {
+    const x = (d.dimensions || {})[k] || {}, label = d.dimension_labels[k], w = Math.round(d.dimension_weights[k] * 100);
+    const pv = prev[k]?.score, delta = x.score != null && pv != null ? Math.round(x.score - pv) : null;
+    const bar = x.score == null ? '<span class="muted">Not assessed</span>'
+      : `<span class="bar" role="img" aria-label="${esc(Math.round(x.score))} of 100"><span style="width:${Math.max(0, Math.min(100, Number(x.score)))}%"></span></span> <b>${esc(Math.round(x.score))}</b>`;
+    return `<tr><th scope="row">${esc(label)} <span class="muted small">(${esc(w)}%)</span></th><td>${bar}
+      ${delta ? `<span class="delta ${delta > 0 ? "up" : "down"}" title="Change since the previous audit">${delta > 0 ? "+" : ""}${esc(delta)}</span>` : ""}</td>
+      <td class="muted small">${esc(x.explanation || "")}</td></tr>`;
+  }).join("");
+}
+function renderAuditReport(d) {
+  const fs = d.findings || [], bad = fs.filter(f => f.passed === false), good = fs.filter(f => f.passed === true),
+        na = fs.filter(f => f.passed === null || f.passed === undefined);
+  const href = safeWeb(d.start_href), b = d.benchmark, hist = (d.observations || {}).domain_history, t = (d.observations || {}).timing;
+  const shots = (d.pages || []).flatMap(p => (p.artifacts || []).map(a => ({...a, page: p})));
+  const conf = d.wqs_confidence != null ? Math.round(d.wqs_confidence * 100) : null;
+  $("#audit-title").textContent = "Website audit";
+  $("#audit-body").innerHTML = `
+  <div class="ahead">
+    <div class="scorecard"><div class="label">Website quality (WQS)</div><div class="big">${d.wqs != null ? esc(Math.round(d.wqs)) : "–"}</div>
+      <div class="tags">${d.wqs != null ? '<span class="tag warn">Provisional</span>' : ""}${conf != null ? `<span class="tag">${esc(conf)}% assessed</span>` : ""}
+      <span class="tag st-${esc(d.status)}">${esc(AUDIT_STATUS[d.status] || human(d.status))}</span></div></div>
+    <div><p><span class="value">${esc(d.start_url)}</span> ${href ? `<a class="btn" href="${esc(href)}" target="_blank" rel="noopener noreferrer">Open the live website in your browser</a>` : ""}</p>
+      <p class="muted small">Audited ${esc(fmtWhen(d.started_at))} · ${esc(d.pages_crawled)} pages · ${esc(d.wqs_version || "")}
+      ${d.previous ? ` · previous audit ${esc(fmtWhen(d.previous.started_at))}: ${esc(Math.round(d.previous.wqs))}` : ""}</p>
+      ${d.reason ? `<p class="muted small">${esc(d.reason)}</p>` : ""}
+      ${(d.explanation || []).length ? `<ul class="reasons">${d.explanation.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}</div>
+  </div>
+  ${(d.recommendations || []).length ? `<section><h3>What to suggest first</h3><ol class="recs">${d.recommendations.map(r => `
+    <li><div><b>${esc(r.title)}</b> <span class="tag sev-${esc(r.severity)}">${esc(human(r.severity))} priority</span></div>
+      <p class="small"><span class="muted">Found:</span> ${esc(r.evidence || r.finding)}</p>
+      <p class="small"><span class="muted">Why it matters:</span> ${esc(r.why)}</p>
+      <p class="small"><span class="muted">Suggestion:</span> ${esc(r.suggestion)}</p>
+      ${r.benchmark ? `<p class="small muted">${esc(r.benchmark)}</p>` : ""}</li>`).join("")}</ol></section>` : ""}
+  <section><h3>Seven areas</h3><table class="dims">${dimensionRows(d)}</table></section>
+  <section><h3>Compared with similar businesses</h3><p>${esc(b?.message || "No comparison was made for this audit.")}</p>
+    ${b && b.scope !== "none" ? `<p class="muted small">Group: ${esc(b.description)} · ${esc(b.peers)} businesses · audits ${esc(b.audited_from)} to ${esc(b.audited_to)} · median ${esc(b.median)}, top quarter from ${esc(b.p75)}</p>` : ""}</section>
+  <section><h3>Findings</h3>
+    <details open><summary>Concerning (${bad.length})</summary><ul class="findings">${bad.map(f => findingRow(f, "bad")).join("") || '<li class="muted">None</li>'}</ul></details>
+    <details><summary>Good (${good.length})</summary><ul class="findings">${good.map(f => findingRow(f, "good")).join("") || '<li class="muted">None</li>'}</ul></details>
+    <details><summary>Not assessed (${na.length}) - these never lower the score</summary><ul class="findings">${na.map(f => findingRow(f, "na")).join("") || '<li class="muted">None</li>'}</ul></details>
+  </section>
+  ${shots.length ? `<section><h3>Screenshots</h3><div class="shots">${shots.map(a => `
+    <figure><a href="/api/audits/artifacts/${esc(a.id)}" target="_blank" rel="noopener"><img loading="lazy" alt="${esc(a.kind === "screenshot_mobile" ? "Phone" : "Desktop")} screenshot of ${esc(a.page.url)}" src="/api/audits/artifacts/${esc(a.id)}"></a>
+    <figcaption class="small muted">${esc(a.kind === "screenshot_mobile" ? "Phone" : "Desktop")} · ${esc(a.page.title || a.page.url)}</figcaption></figure>`).join("")}</div></section>` : ""}
+  <details class="advanced"><summary>Pages visited, timing and domain history</summary>
+    <section>${table(d.pages, [["#", "seq", "num"], ["Address", "url"], ["Status", r => r.status ?? ""], ["Title", "title"], ["Time (ms)", "elapsed_ms", "num"], ["Issue", r => r.blocked_reason || r.error || ""]])}</section>
+    ${t ? `<p class="small muted">Home page in the browser on this PC (a lab measurement, not Lighthouse): ${esc(Math.round((t.bytes || 0) / 1000))} kB in ${esc(t.requests)} requests, loaded after ${esc(((t.load_ms || 0) / 1000).toFixed(1))} s.</p>` : ""}
+    ${hist ? `<p class="small muted">Domain history: ${esc(domainHistoryText(hist))}</p>` : ""}
+    <p class="small muted">${esc(d.calibration_note)}</p>
+  </details>`;
+}
+function domainHistoryText(h) {
+  const w = h.wayback || {}, r = h.rdap || {};
+  const parts = [];
+  if (w.first_capture) parts.push(`first archived ${w.first_capture}, last ${w.last_capture} (Internet Archive)`);
+  else if (w.status) parts.push(`Internet Archive: ${w.status}`);
+  if (r.registered) parts.push(`registered ${r.registered} (RDAP)`);
+  else if (r.status) parts.push(`registration date: ${r.status}`);
+  return parts.join("; ") || h.status || "not available";
+}
+async function openAudit(auditId) {
+  const dlg = $("#audit");
+  $("#audit-body").innerHTML = '<p class="muted">Loading…</p>';
+  if (!dlg.open) dlg.showModal();
+  try { audit.data = await api(`/api/audits/${auditId}`); renderAuditReport(audit.data); }
+  catch (e) { $("#audit-body").innerHTML = `<p><strong>Could not load the audit.</strong><br>${esc(e.message)}</p>`; }
+}
+function wireAudits() {
+  $("#detail").addEventListener("click", e => {
+    const run = e.target.closest("[data-audit-run]"), open = e.target.closest("[data-audit-open]");
+    if (run) { run.disabled = true; runAudit(+run.dataset.auditRun); }
+    if (open) openAudit(+open.dataset.auditOpen);
+  });
+}
+
+// ---------------------------------------------------------------- saved searches (M3)
+async function openSaved() {
+  $("#saved").showModal();
+  await renderSaved();
+}
+async function renderSaved() {
+  const body = $("#saved-body");
+  if (!state.crm.me) {
+    body.innerHTML = '<p>Saved searches are shared in your LeadIntel database. Set up your salesperson profile first.</p><button type="button" class="btn primary" data-saved="profile">Set up profile</button>';
+    return;
+  }
+  let rows = [];
+  try { rows = await api("/api/crm/saved-searches"); } catch (e) { body.innerHTML = `<p>${esc(e.message)}</p>`; return; }
+  body.innerHTML = `<form id="saved-form" class="row"><label class="field grow">Save the current search as
+      <input name="name" required maxlength="120" placeholder="e.g. Lawn care near downtown, no website"></label>
+      <button class="btn primary">Save</button></form>
+    <p class="hint">Saves every filter, the search area (center and radius), the sort order and the layout. Saving under an existing name replaces it.</p>
+    ${rows.length ? `<ul class="saved">${rows.map(r => `<li><div><b>${esc(r.name)}</b><div class="muted small">${esc(savedSummary(r.params))}</div></div>
+      <span class="grow"></span><button type="button" class="btn primary" data-saved="open" data-id="${esc(r.id)}">Open</button>
+      <button type="button" class="btn" data-saved="delete" data-id="${esc(r.id)}" aria-label="Delete ${esc(r.name)}">Delete</button></li>`).join("")}</ul>`
+      : '<p class="muted">No saved searches yet.</p>'}`;
+  state.savedRows = rows;
+}
+function savedSummary(p) {
+  const bits = [];
+  if (p.near) bits.push(`within ${fmtRadius(Number(p.r), p.ru === "km" ? "km" : "mi")} of ${p.nl || p.near}`);
+  for (const k of MULTI) if (p[k]) bits.push(p[k].split(",").map(v => LABELS[k]?.[v] || (k === "county" ? countyName(v) : human(v))).join(", "));
+  if (p.q) bits.push(`name contains "${p.q}"`);
+  if (p.sort && p.sort !== "lps") bits.push(`sorted by ${human(p.sort)}`);
+  return bits.join(" · ") || "all businesses";
+}
+function currentSearchParams() {
+  const p = Object.fromEntries(new URLSearchParams(location.hash.slice(1)));
+  delete p.id; delete p.page;
+  p.view = state.view;
+  return p;
+}
+async function onSavedClick(e) {
+  const b = e.target.closest("[data-saved]"); if (!b) return;
+  if (b.dataset.saved === "profile") { $("#saved").close(); return openProfile(); }
+  const row = (state.savedRows || []).find(r => r.id === +b.dataset.id);
+  if (!row) return;
+  if (b.dataset.saved === "delete") {
+    if (!confirm(`Delete the saved search "${row.name}"?`)) return;
+    try { await api(`/api/crm/saved-searches/${row.id}`, {method: "DELETE"}); toast("Saved search deleted"); } catch (err) { toast(err.message); }
+    return renderSaved();
+  }
+  const p = new URLSearchParams(row.params);
+  const view = p.get("view"); p.delete("view");
+  history.pushState(null, "", "#" + p.toString());
+  if (view) applyView(view);
+  $("#saved").close();
+  readHash(); renderFilters(); renderArea(); syncAreaOnMap({fit: true}); refresh(false);
+  $("#detail").innerHTML = '<p class="muted pad">Select a business to see its details.</p>';
+  toast(`Opened "${row.name}"`);
+}
+async function onSavedSubmit(e) {
+  e.preventDefault();
+  const name = e.target.name.value.trim(); if (!name) return;
+  try { await api("/api/crm/saved-searches", {method: "POST", json: {name, params: currentSearchParams()}}); toast(`Saved "${name}"`); }
+  catch (err) { toast(err.message); return; }
+  renderSaved();
 }
 
 // ---------------------------------------------------------------- coverage banner
@@ -393,7 +618,7 @@ function salesTags(i) {
 
 async function loadCrm() {
   try { state.crm = await api("/api/crm/me"); } catch { state.crm = {available: false, configured: false, me: null}; }
-  $("#sales").hidden = $("#profile-btn").hidden = !state.crm.available;
+  $("#sales").hidden = $("#profile-btn").hidden = $("#saved-btn").hidden = !state.crm.available;
   if (!state.crm.available) return;
   $("#profile-btn").textContent = state.crm.me?.initials || "👤";
   try { state.lists = await api("/api/crm/lists"); } catch { state.lists = []; }
@@ -922,6 +1147,10 @@ function wire() {
   $("#detail").addEventListener("click", e => { const b = e.target.closest("[data-copy]"); if (b) copy(b.dataset.copy); });
   wireCrm();
   wireArea();
+  wireAudits();
+  $("#saved-btn").addEventListener("click", openSaved);
+  $("#saved").addEventListener("click", onSavedClick);
+  $("#saved").addEventListener("submit", onSavedSubmit);
   $("#theme").addEventListener("change", e => { applyTheme(e.target.value); storage("leadintel.theme", e.target.value); });
   $("#view").addEventListener("change", e => applyView(e.target.value));
   $("#export").addEventListener("click", exportCsv);

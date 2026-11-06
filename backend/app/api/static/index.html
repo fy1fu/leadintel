@@ -18,6 +18,7 @@
     <button type="button" id="areachip-x" class="x" title="Remove the search area" aria-label="Remove the search area">✕</button></div>
   <div class="actions">
     <button id="sales" class="btn" hidden title="Your pipeline, follow-ups and recent activity">Sales</button>
+    <button id="saved-btn" class="btn" hidden title="Save this search or open a saved one">Saved searches</button>
     <button id="profile-btn" class="btn icon" hidden title="Your salesperson profile" aria-label="Your salesperson profile">👤</button>
     <select id="view" aria-label="Layout">
       <option value="split">List + map</option><option value="list">List only</option><option value="map">Map only</option>
@@ -101,6 +102,14 @@
 <dialog id="dash" aria-labelledby="dash-title" class="wide">
   <div class="dlg-head"><h2 id="dash-title">Sales</h2><button type="button" class="btn icon" data-close aria-label="Close">✕</button></div>
   <div id="dash-body"><p class="muted">Loading…</p></div>
+</dialog>
+<dialog id="audit" aria-labelledby="audit-title" class="wide">
+  <div class="dlg-head"><h2 id="audit-title">Website audit</h2><button type="button" class="btn icon" data-close aria-label="Close">✕</button></div>
+  <div id="audit-body"><p class="muted">Loading…</p></div>
+</dialog>
+<dialog id="saved" aria-labelledby="saved-title">
+  <div class="dlg-head"><h2 id="saved-title">Saved searches</h2><button type="button" class="btn icon" data-close aria-label="Close">✕</button></div>
+  <div id="saved-body"><p class="muted">Loading…</p></div>
 </dialog>
 <script nonce="__LEADINTEL_NONCE__" src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script nonce="__LEADINTEL_NONCE__" src="/assets/app.js?v=__ASSET_VERSION__"></script>
