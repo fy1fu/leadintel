@@ -204,7 +204,8 @@ def test_legacy_default_limit_is_500(api):
 def test_empty_qualification_means_all_as_before(api):
     c, calls = api
     c.get("/api/prospects", params={"qualification": ""})
-    assert "f_quals" not in calls[0][2] and "q.status" not in calls[0][1].split("WHERE", 1)[1]
+    where = calls[0][1].split("WHERE", 1)[1].split("ORDER BY", 1)[0]       # the filter conditions only
+    assert "f_quals" not in calls[0][2] and "q.status" not in where
 
 
 def test_paged_mode(api):
@@ -220,7 +221,7 @@ def test_page_without_size_defaults_to_50(api):
     assert calls[0][2]["limit"] == 50 and calls[0][2]["offset"] == 50 and d["page_size"] == 50
 
 
-@pytest.mark.parametrize("params", [{"page_size": 201}, {"page": 0}, {"limit": 5001}, {"limit": 0},
+@pytest.mark.parametrize("params", [{"page_size": 201}, {"page": 0}, {"limit": 5001}, {"limit": -1},
                                     {"website": "none"}, {"operating": "maybe"}, {"sort": "lps; DROP"},
                                     {"bos_min": 70, "bos_max": 10}, {"phone": "perhaps"}])
 def test_invalid_parameters_give_422_without_querying(api, params):
@@ -265,3 +266,30 @@ def test_summary_and_points_are_not_taken_for_a_location_id(api):
     c, _ = api
     assert c.get("/api/prospects/summary").status_code == 200
     assert c.get("/api/prospects/points").status_code == 200
+
+
+def test_legacy_limit_zero_still_returns_no_rows_but_reports_the_total(api):
+    c, calls = api
+    d = c.get("/api/prospects", params={"limit": 0}).json()
+    assert calls[0][2]["limit"] == 0 and d["count"] == 0 and d["items"] == [] and d["total"] == 10
+
+
+def test_export_query_shares_the_filter_and_order():
+    from app.reports.prospects import export_query
+    f = ProspectFilter(counties=["duval"], website=["listed"], sort="name")
+    where, params = f.where()
+    sql, p = export_query(f, 123)
+    assert f"WHERE {where}" in sql and "ORDER BY lower(l.display_name), l.id" in sql and p["limit"] == 123
+    assert {k: v for k, v in p.items() if k.startswith("f_")} == params
+
+
+def test_export_rejects_invalid_filters_and_limits(api):
+    c, calls = api
+    assert c.get("/api/prospects/export.csv", params={"website": "none"}).status_code == 422
+    assert c.get("/api/prospects/export.csv", params={"limit": 100_001}).status_code == 422
+    assert calls == []
+
+
+def test_legacy_fips_restriction_is_kept_for_the_cli():
+    where, params = ProspectFilter(fips=["12031"]).where()
+    assert "l.county_fips = ANY(CAST(:f_fips AS text[]))" in where and params["f_fips"] == ["12031"]

@@ -12,6 +12,8 @@ from pathlib import Path
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.api.filters import FROM_SQL, ProspectFilter, count_query
+
 NICHE_SQL = """
 WITH cur AS (
   SELECT l.id, coalesce(l.industry_profile, 'unclassified') AS niche, l.county_fips, l.operating_status,
@@ -67,8 +69,8 @@ def niche_comparison(s: Session, fips: list[str], niches: list[str] | None = Non
                       "Rows whose coverage is not 'complete' must not be compared as if complete."]}
 
 
-EXPORT_SQL = """
-SELECT l.id, l.display_name, coalesce(l.industry_profile, 'unclassified') AS industry, a2.key AS county, l.operating_status,
+EXPORT_COLUMNS = """
+SELECT l.id, l.display_name, coalesce(l.industry_profile, 'unclassified') AS industry, a.key AS county, l.operating_status,
   (SELECT concat_ws(', ', ad.line1, ad.city, ad.state, ad.zip5) FROM address ad WHERE ad.owner_type='location' AND ad.owner_id=l.id
      ORDER BY ad.role = 'principal' DESC, ad.id LIMIT 1) AS address,
   (SELECT string_agg(c.display || ' [' || lc.verification_state || ', ' || lc.source_key || ']', '; ')
@@ -84,32 +86,54 @@ SELECT l.id, l.display_name, coalesce(l.industry_profile, 'unclassified') AS ind
      FROM score_factor f WHERE f.score_id = b.id AND f.effect <> 0) AS bos_factors,
   (SELECT string_agg(DISTINCT k.source_key || ':' || k.external_id, '; ') FROM location_source_link k WHERE k.location_id=l.id AND k.active) AS sources,
   l.last_seen_at::date AS last_seen
-FROM location l
-JOIN area a2 ON a2.kind='county' AND a2.spec->>'geoid' = l.county_fips
-LEFT JOIN score b ON b.location_id = l.id AND b.kind='bos' AND b.superseded_at IS NULL
-LEFT JOIN score p ON p.location_id = l.id AND p.kind='lps' AND p.superseded_at IS NULL
-LEFT JOIN qualification q ON q.location_id = l.id AND q.superseded_at IS NULL
-WHERE l.merged_into_id IS NULL AND l.county_fips = ANY(:fips)
-  AND (CAST(:niche AS text) IS NULL OR l.industry_profile = CAST(:niche AS text))
-  AND (CAST(:quals AS text[]) IS NULL OR q.status = ANY(CAST(:quals AS text[])))
-ORDER BY p.value DESC NULLS LAST, l.id
-LIMIT :limit
 """
+MAX_EXPORT = 100_000
 
 
-def export_csv(s: Session, path: Path, fips: list[str], *, niche: str | None = None, quals: list[str] | None = None,
-               limit: int = 100000) -> int:
-    rows = s.execute(text(EXPORT_SQL), {"fips": fips, "niche": niche, "quals": quals, "limit": limit}).mappings().all()
+def export_query(f: ProspectFilter, limit: int = MAX_EXPORT) -> tuple[str, dict]:
+    """The export uses the same FROM, WHERE and ORDER BY as the list, summary and map (app.api.filters)."""
+    where, params = f.where()
+    return (f"{EXPORT_COLUMNS}{FROM_SQL}WHERE {where}\nORDER BY {f.order_by()}\nLIMIT :limit",
+            {**params, "limit": int(limit)})
+
+
+def export_row(r) -> dict:
+    """Adds the 'missing' explanation: a blank field states why it is blank; nothing is inferred."""
+    d = dict(r)
+    missing = [f"{k}: not published in the sources checked" for k in ("phones", "emails") if not d.get(k)]
+    if not d.get("websites"):
+        missing.append("websites: none listed; website discovery (Phase 2) not run yet")
+    d["missing"] = "; ".join(missing)
+    return d
+
+
+EXPORT_FIELDS = ["id", "display_name", "industry", "county", "operating_status", "address", "phones", "emails",
+                 "websites", "profiles", "registry", "bos", "lps", "stage", "evidence_points", "caps",
+                 "qualification", "qualification_reasons", "bos_factors", "sources", "last_seen", "missing"]
+
+
+def export_counts(s, f: ProspectFilter, limit: int = MAX_EXPORT) -> dict:
+    sql, params = count_query(f)
+    total = int(s.execute(text(sql), params).scalar() or 0)
+    return {"total": total, "exported": min(total, limit), "limit": limit, "truncated": total > limit}
+
+
+def export_csv(s: Session, path: Path, fips: list[str] | None = None, *, niche: str | None = None,
+               quals: list[str] | None = None, limit: int = MAX_EXPORT, flt: ProspectFilter | None = None) -> int:
+    """Writes the prospects matching ``flt`` (or the legacy niche/quals arguments) to ``path``; returns rows written.
+
+    ``fips`` (legacy) restricts to those county codes on top of the target-county join every view uses.
+    """
+    f = flt or ProspectFilter(niches=[niche] if niche else [], qualifications=list(quals or []))
+    if fips:
+        f.fips = list(fips)
+    sql, params = export_query(f, limit)
     path.parent.mkdir(parents=True, exist_ok=True)
+    n = 0
     with open(path, "w", newline="", encoding="utf-8") as fh:
-        cols = list(rows[0].keys()) + ["missing"] if rows else ["id"]
-        w = csv.DictWriter(fh, fieldnames=cols)
+        w = csv.DictWriter(fh, fieldnames=EXPORT_FIELDS)
         w.writeheader()
-        for r in rows:
-            d = dict(r)
-            missing = [f"{k}: not published in the sources checked" for k in ("phones", "emails") if not d.get(k)]
-            if not d.get("websites"):
-                missing.append("websites: none listed; website discovery (Phase 2) not run yet")
-            d["missing"] = "; ".join(missing)
-            w.writerow(d)
-    return len(rows)
+        for r in s.execute(text(sql), params).mappings():
+            w.writerow(export_row(r))
+            n += 1
+    return n

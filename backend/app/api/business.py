@@ -8,12 +8,16 @@ from __future__ import annotations
 from functools import lru_cache
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from app.api.filters import (MAX_LEGACY_LIMIT, MAX_PAGE_SIZE, MAX_POINTS, FilterError, ProspectFilter,
-                             count_query, list_query, points_query, split_list, summary_query)
+from app.api.filters import (MAX_LEGACY_LIMIT, MAX_PAGE_SIZE, MAX_POINTS, OPERATING_STATUSES, QUALIFICATIONS,
+                             SORTS, WEBSITE_STATUSES, FilterError, ProspectFilter, count_query, list_query,
+                             points_query, split_list, summary_query)
+from app.api.security import safe_link
 from app.config import get_settings
+from app.reports.prospects import MAX_EXPORT
 from app.db.session import DatabaseUnavailable, check_database, make_engine
 
 router = APIRouter(prefix="/api")
@@ -61,11 +65,13 @@ def prospect_filter(county: str | None = None, niche: str | None = None, qualifi
 @router.get("/prospects")
 def prospects(f: ProspectFilter = Depends(prospect_filter),
               page: int | None = Query(None, ge=1), page_size: int | None = Query(None, ge=1, le=MAX_PAGE_SIZE),
-              limit: int = Query(500, ge=1, le=MAX_LEGACY_LIMIT)) -> dict:
+              limit: int = Query(500, ge=0, le=MAX_LEGACY_LIMIT)) -> dict:
     """Prospects matching the filters, server-side.
 
     Paged mode (page and/or page_size given): ``page_size`` rows (default 50, at most 200) of page ``page``.
-    Legacy mode (neither given): the first ``limit`` rows (default 500, at most 5000), as before S2a.
+    Legacy mode (neither given): the first ``limit`` rows (default 500, at most 5000), as before S2a;
+    ``limit=0`` still returns no rows (now with ``total``, i.e. a count-only request). Negative limits are 422
+    (before S2a they reached the database and failed with 500).
     ``count`` is the number of rows returned (unchanged meaning); ``total`` is every matching business.
     """
     paged = page is not None or page_size is not None
@@ -111,6 +117,67 @@ def prospect_points(f: ProspectFilter = Depends(prospect_filter)) -> dict:
             "without_coordinates": total - with_coords, "limit": MAX_POINTS, "truncated": truncated}
 
 
+def _with_links(contacts: list[dict]) -> list[dict]:
+    """Adds a vetted link target (tel:/mailto:) to each contact, or None when the value must stay plain text."""
+    kinds = {"phone": "tel", "email": "mailto"}
+    for c in contacts:
+        c["href"] = safe_link(kinds[c["kind"]], c.get("value_norm") or c.get("display")) if c["kind"] in kinds else None
+    return contacts
+
+
+@router.get("/filters/options")
+def filter_options() -> dict:
+    """Values for the filter panel: target counties and the niches present in the data."""
+    counties = _rows("SELECT key, name FROM area WHERE kind = 'county' AND is_target ORDER BY name")
+    niches = [r["niche"] for r in _rows("SELECT DISTINCT industry_profile AS niche FROM location "
+                                        "WHERE industry_profile IS NOT NULL AND merged_into_id IS NULL ORDER BY 1")]
+    return {"counties": counties, "niches": niches, "website": list(WEBSITE_STATUSES),
+            "operating": list(OPERATING_STATUSES), "qualifications": list(QUALIFICATIONS), "sorts": list(SORTS)}
+
+
+EXPORT_CHUNK_ROWS = 500   # rows per streamed chunk
+
+
+@router.get("/prospects/export.csv")
+def prospects_export(f: ProspectFilter = Depends(prospect_filter),
+                     limit: int = Query(MAX_EXPORT, ge=1, le=MAX_EXPORT)) -> StreamingResponse:
+    """CSV of the prospects matching the filters - the same filter as the list, summary and map.
+
+    The file is a clean CSV table. How many businesses matched, how many rows were exported and whether the
+    export was cut off are sent as X-LeadIntel-* headers (the page shows the counts before exporting). Rows are
+    streamed from the database; nothing is written on the server.
+    """
+    import csv
+    import io
+    from datetime import datetime
+
+    from app.reports.prospects import EXPORT_FIELDS, export_query, export_row
+    e = engine()
+    csql, cparams = count_query(f)
+    with e.connect() as c:
+        total = int(c.execute(text(csql), cparams).scalar() or 0)
+    sql, params = export_query(f, limit)
+
+    def rows():
+        buf = io.StringIO()
+        w = csv.DictWriter(buf, fieldnames=EXPORT_FIELDS)
+        w.writeheader()
+        with e.connect().execution_options(stream_results=True, yield_per=EXPORT_CHUNK_ROWS) as c:
+            for i, r in enumerate(c.execute(text(sql), params).mappings(), 1):
+                w.writerow(export_row(r))
+                if i % EXPORT_CHUNK_ROWS == 0:
+                    yield buf.getvalue()
+                    buf.seek(0)
+                    buf.truncate()
+        yield buf.getvalue()
+
+    name = f"leadintel-prospects-{datetime.now():%Y%m%d-%H%M%S}.csv"
+    return StreamingResponse(rows(), media_type="text/csv; charset=utf-8", headers={
+        "Content-Disposition": f'attachment; filename="{name}"',
+        "X-LeadIntel-Total": str(total), "X-LeadIntel-Exported": str(min(total, limit)),
+        "X-LeadIntel-Limit": str(limit), "X-LeadIntel-Truncated": "true" if total > limit else "false"})
+
+
 @router.get("/prospects/{location_id}")
 def profile(location_id: int) -> dict:
     loc = _rows("SELECT id, display_name, name_norm, category, industry_profile, county_fips, operating_status, chain_flag, "
@@ -129,10 +196,12 @@ def profile(location_id: int) -> dict:
         "aliases": _rows("SELECT alias, kind FROM location_alias WHERE location_id=:i ORDER BY kind", i=i),
         "addresses": _rows("SELECT role, line1, line2, city, state, zip5, county_fips, geocode_method, is_operating_location, "
                            "not_operating_reason FROM address WHERE owner_type='location' AND owner_id=:i", i=i),
-        "contacts": _rows("SELECT c.kind, c.display, lc.verification_state, lc.source_key FROM location_contact lc "
-                          "JOIN contact_point c ON c.id=lc.contact_point_id WHERE lc.location_id=:i AND lc.active", i=i),
-        "online_profiles": _rows("SELECT url, platform, platform_kind, verification_state, source_key FROM online_profile "
-                                 "WHERE location_id=:i ORDER BY platform_kind", i=i),
+        "contacts": _with_links(_rows("SELECT c.kind, c.display, c.value_norm, lc.verification_state, lc.source_key "
+                                      "FROM location_contact lc JOIN contact_point c ON c.id=lc.contact_point_id "
+                                      "WHERE lc.location_id=:i AND lc.active", i=i)),
+        "online_profiles": [dict(r, href=safe_link("web", r["url"]))
+                            for r in _rows("SELECT url, platform, platform_kind, verification_state, source_key "
+                                           "FROM online_profile WHERE location_id=:i ORDER BY platform_kind", i=i)],
         "organizations": _rows("""SELECT o.document_number, o.name, o.filing_kind, o.filing_type_code, o.status, o.registration_date,
                                          lo.role, lo.confidence, lo.evidence,
                                          (SELECT json_agg(json_build_object('owner_document', ol.to_document_number, 'kind', ol.kind))

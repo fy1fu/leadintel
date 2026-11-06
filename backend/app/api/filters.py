@@ -116,6 +116,7 @@ class ProspectFilter:
     lps_min: float | None = None
     lps_max: float | None = None
     sort: str = "lps"
+    fips: list[str] = field(default_factory=list)          # internal (CLI/legacy export): county FIPS codes
 
     def __post_init__(self):
         _check(self.qualifications, QUALIFICATIONS, "qualification")
@@ -140,6 +141,9 @@ class ProspectFilter:
         if self.counties:
             conds.append("a.key = ANY(CAST(:f_counties AS text[]))")
             params["f_counties"] = list(self.counties)
+        if self.fips:
+            conds.append("l.county_fips = ANY(CAST(:f_fips AS text[]))")
+            params["f_fips"] = list(self.fips)
         if self.niches:
             conds.append("l.industry_profile = ANY(CAST(:f_niches AS text[]))")
             params["f_niches"] = list(self.niches)
@@ -193,8 +197,18 @@ SELECT l.id, l.display_name AS name, coalesce(l.industry_profile, 'unclassified'
 
 
 def list_query(f: ProspectFilter, limit: int, offset: int) -> tuple[str, dict]:
+    """One page of prospects.
+
+    The page's ids are chosen first using only the filter and the sort keys; the per-row EXISTS columns
+    (website status, phone, email) are then computed for those rows only. Computing them for every row
+    skipped by OFFSET made deep pages ~6x slower (1.25 s vs 0.2 s at page 400 of 100k rows, S2b measurement).
+    """
     where, params = f.where()
-    sql = f"{LIST_COLUMNS}{FROM_SQL}WHERE {where}\nORDER BY {f.order_by()}\nLIMIT :limit OFFSET :offset"
+    order = f.order_by()
+    sql = (f"WITH page AS MATERIALIZED (SELECT l.id AS pid {FROM_SQL}WHERE {where}\n"
+           f"ORDER BY {order}\nLIMIT :limit OFFSET :offset)\n"
+           f"{LIST_COLUMNS}{FROM_SQL.replace('FROM location l', 'FROM page JOIN location l ON l.id = page.pid', 1)}"
+           f"ORDER BY {order}")
     return sql, {**params, "limit": int(limit), "offset": int(offset)}
 
 

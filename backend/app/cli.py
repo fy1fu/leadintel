@@ -52,8 +52,15 @@ def build_parser() -> argparse.ArgumentParser:
     rp.add_argument("--niches", help="comma-separated industry profiles (default: all)")
     ex = sub.add_parser("export", help="prospect CSV with provenance and verification states")
     ex.add_argument("path", type=Path)
-    ex.add_argument("--niche")
-    ex.add_argument("--qualification", help="comma-separated: provisionally_qualified,needs_research,not_qualified")
+    ex.add_argument("--niche", help="comma-separated industry profiles")
+    ex.add_argument("--qualification", help="comma-separated: provisionally_qualified,needs_research,not_qualified,unscored")
+    ex.add_argument("--county", help="comma-separated target-area keys, e.g. duval,clay")
+    ex.add_argument("--q", help="business-name search")
+    ex.add_argument("--website", help="comma-separated: listed,social_only,none_recorded,unknown")
+    ex.add_argument("--operating", help="comma-separated: open,closed,unknown")
+    ex.add_argument("--phone", choices=["listed", "none"], help="phone listed in a source, or none listed")
+    ex.add_argument("--email", choices=["listed", "none"], help="email listed in a source, or none listed")
+    ex.add_argument("--sort", choices=["lps", "bos", "name"], default="lps")
     ex.add_argument("--limit", type=int, default=100000)
     bt = sub.add_parser("import-btr", help="import a county business-tax-receipt CSV (manual export)")
     bt.add_argument("path", type=Path)
@@ -205,9 +212,21 @@ def _business(args) -> int:
                 from app.reports.prospects import niche_comparison
                 print(json.dumps(niche_comparison(s, fips, args.niches.split(",") if args.niches else None), indent=2, default=str))
             else:
-                from app.reports.prospects import export_csv
-                n = export_csv(s, args.path, fips, niche=args.niche,
-                               quals=args.qualification.split(",") if args.qualification else None, limit=args.limit)
-                print(f"wrote {n} prospects to {args.path}")
+                from app.api.filters import FilterError, ProspectFilter, split_list
+                from app.reports.prospects import export_counts, export_csv
+                yn = {"listed": True, "none": False, None: None}
+                try:   # the same filter as the list, summary and map in the app
+                    flt = ProspectFilter(niches=split_list(args.niche), qualifications=split_list(args.qualification),
+                                         counties=split_list(args.county), q=args.q, website=split_list(args.website),
+                                         operating=split_list(args.operating), phone=yn[args.phone],
+                                         email=yn[args.email], sort=args.sort, fips=fips)
+                except FilterError as exc:
+                    print(f"leadintel export: {exc}", file=sys.stderr)
+                    return 2
+                counts = export_counts(s, flt, args.limit)
+                n = export_csv(s, args.path, flt=flt, limit=args.limit)
+                print(f"wrote {n} prospects to {args.path} (matching: {counts['total']}"
+                      + (f"; limited to {args.limit}, {counts['total'] - n} not exported" if counts["truncated"] else "")
+                      + ")")
         return 0
     return 1
