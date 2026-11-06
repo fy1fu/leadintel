@@ -188,5 +188,20 @@ check("progress: step text comes only from the run record and finished-source ro
       "$runStatus" in fs and "$finished" in fs and "Working (step details unavailable)" in dl)
 check("progress queries are read-only", "default_transaction_read_only=on" in block_after(common, r"function Invoke-ReadOnlySql\("))
 
+# M2: the separate sales (CRM) login
+common_ps = (HERE / "common.ps1").read_text()
+crm_block = setup[setup.find("# M2: a separate login"):setup.find("Bringing the database schema up to date")]
+check("setup: the sales login is created with no role attributes and NOINHERIT",
+      all(a in crm_block for a in ("NOSUPERUSER", "NOCREATEDB", "NOCREATEROLE", "NOREPLICATION", "NOBYPASSRLS", "NOINHERIT")))
+check("setup: the sales login is prepared before 'db upgrade' (which sets its privileges)", bool(crm_block))
+check("setup: Setup grants the sales login nothing itself (privileges come only from 'db upgrade')",
+      not re.search(r"\bGRANT\b", crm_block))
+check("setup: the sales password is generated once and kept (never regenerated)",
+      "if (-not (Test-Secret 'db_crm')) { Save-PlainSecret 'db_crm'" in crm_block)
+check("setup: failing to prepare the sales login only warns (LeadIntel falls back to the maintenance lock)",
+      "Write-Note 'Warning: the sales account" in crm_block and "Stop-WithError" not in crm_block)
+check("environment: the sales database URL is cleared with the other credentials",
+      "'LEADINTEL_CRM_DATABASE_URL'" in block_after(common_ps, r"function Clear-AppEnvironment"))
+
 print(f"\n{'ALL CHECKS PASSED' if not fails else f'{len(fails)} CHECK(S) FAILED'}")
 sys.exit(1 if fails else 0)

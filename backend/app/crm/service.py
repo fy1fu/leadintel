@@ -1,12 +1,8 @@
 """Local CRM (M2): identities, claims, pipeline, activity history, lists and the dashboard.
 
-Write path and the B0 maintenance gate
-* CRM writes use their own engine, exempt from the maintenance-lock commit gate: claims and notes must work
-  while a 30-minute Load Data run holds the lock. The exemption is narrow:
-    - a cursor hook on this engine refuses every INSERT/UPDATE/DELETE whose target is not a ``crm_*`` table,
-      so CRM code can never change business facts, provenance or scores;
-    - writes are refused while ``db upgrade`` holds the maintenance lock (``UpgradeInProgress``).
-  Business-data writes remain fully gated.
+Write path and the B0 maintenance gate: see app.crm.access. By default every CRM write takes the maintenance
+lock like any other writer; only a separate PostgreSQL login that the database itself restricts to the CRM
+tables (verified before use) may write while another operation holds the lock.
 * Concurrency: one ``crm_prospect`` row per (organization, business) (unique constraint); a claim is a
   conditional UPDATE (``owner_user_id IS NULL``), so two simultaneous claims cannot both succeed. Field edits
   use optimistic concurrency (``version``). Every change also appends a ``crm_activity`` row.
@@ -14,24 +10,20 @@ Write path and the B0 maintenance gate
 from __future__ import annotations
 
 import re
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from functools import lru_cache
+from typing import Iterator
 
-from sqlalchemy import event, text
+from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 
-from app.db.locks import _HOLDER_SQL, _KEY_PARAMS, exempt_engine
+from app.crm.access import CrmUnavailable, CrmWriter, writer_for
 from app.db.models import CRM_STATUSES
 
 USER_ACTIVITY_KINDS = ("note", "call", "email", "meeting", "visit")
 CLAIM_FILTERS = ("mine", "others", "unclaimed", "claimed")
 FOLLOW_UP_FILTERS = ("overdue", "today", "week", "any", "none")
-# Every write target anywhere in the statement (CTEs included); "FOR UPDATE" and "DO UPDATE SET" are not targets.
-_WRITE = re.compile(r"(?<![\w.])(?:INSERT\s+INTO|(?<!FOR\s)(?<!DO\s)UPDATE|DELETE\s+FROM|MERGE\s+INTO)\s+(?:ONLY\s+)?([\w.\"]+)",
-                    re.I)
-_DDL = re.compile(r"^\s*(?:CREATE|ALTER|DROP|TRUNCATE|COPY|GRANT|REVOKE|VACUUM|CLUSTER|REINDEX|COMMENT|SECURITY|LOCK|DO|CALL)\b",
-                  re.I)
 
 
 class CrmError(Exception):
@@ -50,8 +42,12 @@ class Forbidden(CrmError):
     status = 403
 
 
-class UpgradeInProgress(CrmError):
+class Unavailable(CrmError):
+    """The change cannot be saved right now (upgrade running, or the maintenance lock is held)."""
     status = 503
+
+
+UpgradeInProgress = Unavailable   # earlier name
 
 
 class NotConfigured(CrmError):
@@ -67,36 +63,22 @@ class Identity:
     role: str
 
 
-# ---------------------------------------------------------------- engine
-def _only_crm_writes(conn, cursor, statement, parameters, context, executemany):
-    if _DDL.match(statement):
-        raise PermissionError("the CRM connection may not change the database structure")
-    for target in _WRITE.findall(statement):
-        table = target.replace('"', "").split(".")[-1].lower()
-        if not table.startswith("crm_"):
-            raise PermissionError(f"the CRM connection may only write crm_* tables (refused: {table})")
+# ---------------------------------------------------------------- writers
+def crm_writer(business_engine: Engine, crm_url: str | None = None) -> CrmWriter:
+    """How CRM writes reach the database (see app.crm.access): the maintenance lock, or a verified restricted login."""
+    if crm_url is None:
+        from app.config import get_settings
+        crm_url = get_settings().crm_database_url
+    return writer_for(business_engine, crm_url)
 
 
-def crm_engine(business_engine: Engine) -> Engine:
-    """A separate engine for CRM writes, same database, restricted to crm_* tables (see module docstring)."""
-    return _crm_engine_for(business_engine.url.render_as_string(hide_password=False))
-
-
-@lru_cache(maxsize=4)
-def _crm_engine_for(url: str) -> Engine:
-    from sqlalchemy import create_engine
-
-    from app.db.timeouts import pg_connect_args
-    e = create_engine(url, pool_pre_ping=True, future=True, **pg_connect_args(url))
-    event.listen(e, "before_cursor_execute", _only_crm_writes)
-    exempt_engine(e)
-    return e
-
-
-def _refuse_during_upgrade(c: Connection) -> None:
-    row = c.execute(text(_HOLDER_SQL), _KEY_PARAMS).first()
-    if row and (row[0] or "").startswith("leadintel:db upgrade"):
-        raise UpgradeInProgress("LeadIntel is upgrading its database; try again in a minute")
+@contextmanager
+def _tx(w: CrmWriter) -> Iterator[Connection]:
+    try:
+        with w.begin() as c:
+            yield c
+    except CrmUnavailable as exc:
+        raise Unavailable(str(exc)) from exc
 
 
 # ---------------------------------------------------------------- identity
@@ -122,15 +104,14 @@ def _clean_initials(initials: str) -> str:
     return s
 
 
-def setup_identity(e: Engine, display_name: str, initials: str, email: str | None = None,
+def setup_identity(w: CrmWriter, display_name: str, initials: str, email: str | None = None,
                    organization_name: str = "My company") -> Identity:
     """Creates (or updates) the local organization and its user. Idempotent."""
     display_name = (display_name or "").strip()
     if not display_name or len(display_name) > 120:
         raise CrmError("display name must be 1-120 characters")
     ini = _clean_initials(initials)
-    with e.begin() as c:
-        _refuse_during_upgrade(c)
+    with _tx(w) as c:
         c.execute(text("INSERT INTO crm_organization (name, kind) VALUES (:n, 'local') "
                        "ON CONFLICT (kind) WHERE kind = 'local' DO NOTHING"), {"n": organization_name})
         org = str(c.execute(text("SELECT id FROM crm_organization WHERE kind = 'local'")).scalar())
@@ -200,9 +181,8 @@ def state(c: Connection, location_id: int) -> dict:
     return base
 
 
-def claim(e: Engine, location_id: int) -> dict:
-    with e.begin() as c:
-        _refuse_during_upgrade(c)
+def claim(w: CrmWriter, location_id: int) -> dict:
+    with _tx(w) as c:
         me = _require(c)
         _location_ok(c, location_id)
         _ensure_row(c, me, location_id)
@@ -218,13 +198,12 @@ def claim(e: Engine, location_id: int) -> dict:
                               {"o": me.organization_id, "l": location_id}).first()
             if owner and str(owner[0]) != me.user_id:
                 raise Conflict(f"already claimed by {owner[1]}")
-    with e.connect() as c:
+    with w.connect() as c:
         return state(c, location_id)
 
 
-def release(e: Engine, location_id: int) -> dict:
-    with e.begin() as c:
-        _refuse_during_upgrade(c)
+def release(w: CrmWriter, location_id: int) -> dict:
+    with _tx(w) as c:
         me = _require(c)
         row = c.execute(text("SELECT owner_user_id FROM crm_prospect WHERE organization_id = CAST(:o AS uuid) AND location_id = :l "
                              "FOR UPDATE"), {"o": me.organization_id, "l": location_id}).first()
@@ -235,13 +214,12 @@ def release(e: Engine, location_id: int) -> dict:
         c.execute(text("UPDATE crm_prospect SET owner_user_id = NULL, claimed_at = NULL, version = version + 1, updated_at = now() "
                        "WHERE organization_id = CAST(:o AS uuid) AND location_id = :l"), {"o": me.organization_id, "l": location_id})
         _log(c, me, location_id, "release", data={"previous_owner": str(row[0])})
-    with e.connect() as c:
+    with w.connect() as c:
         return state(c, location_id)
 
 
-def reassign(e: Engine, location_id: int, user_id: str) -> dict:
-    with e.begin() as c:
-        _refuse_during_upgrade(c)
+def reassign(w: CrmWriter, location_id: int, user_id: str) -> dict:
+    with _tx(w) as c:
         me = _require(c)
         if me.role not in ("owner", "admin"):
             raise Forbidden("only an admin can reassign a business")
@@ -257,21 +235,20 @@ def reassign(e: Engine, location_id: int, user_id: str) -> dict:
                        "updated_at = now() WHERE organization_id = CAST(:o AS uuid) AND location_id = :l"),
                   {"u": user_id, "o": me.organization_id, "l": location_id})
         _log(c, me, location_id, "reassign", data={"from": str(prev) if prev else None, "to": user_id})
-    with e.connect() as c:
+    with w.connect() as c:
         return state(c, location_id)
 
 
 _UNSET = object()
 
 
-def update(e: Engine, location_id: int, version: int, status=_UNSET, next_action=_UNSET, follow_up_at=_UNSET) -> dict:
+def update(w: CrmWriter, location_id: int, version: int, status=_UNSET, next_action=_UNSET, follow_up_at=_UNSET) -> dict:
     """Changes status / next action / follow-up date; `version` must match (optimistic concurrency)."""
     if status is not _UNSET and status not in CRM_STATUSES:
         raise CrmError(f"unknown status {status!r}")
     if next_action is not _UNSET and next_action is not None and len(next_action) > 500:
         raise CrmError("next action is longer than 500 characters")
-    with e.begin() as c:
-        _refuse_during_upgrade(c)
+    with _tx(w) as c:
         me = _require(c)
         _location_ok(c, location_id)
         _ensure_row(c, me, location_id)
@@ -301,11 +278,11 @@ def update(e: Engine, location_id: int, version: int, status=_UNSET, next_action
             if "follow_up_at" in changes:
                 fu = changes["follow_up_at"]
                 _log(c, me, location_id, "follow_up", data={"at": fu.isoformat() if fu else None})
-    with e.connect() as c:
+    with w.connect() as c:
         return state(c, location_id)
 
 
-def add_activity(e: Engine, location_id: int, kind: str, body: str | None, occurred_at: datetime | None = None,
+def add_activity(w: CrmWriter, location_id: int, kind: str, body: str | None, occurred_at: datetime | None = None,
                  outcome: str | None = None) -> dict:
     """Notes and contact history (call, email, meeting, visit), written by the salesperson."""
     if kind not in USER_ACTIVITY_KINDS:
@@ -315,13 +292,12 @@ def add_activity(e: Engine, location_id: int, kind: str, body: str | None, occur
         raise CrmError("a note needs some text")
     if len(body) > 10_000:
         raise CrmError("text is longer than 10,000 characters")
-    with e.begin() as c:
-        _refuse_during_upgrade(c)
+    with _tx(w) as c:
         me = _require(c)
         _location_ok(c, location_id)
         _ensure_row(c, me, location_id)
         _log(c, me, location_id, kind, body or None, {"outcome": outcome} if outcome else {}, occurred_at)
-    with e.connect() as c:
+    with w.connect() as c:
         return state(c, location_id)
 
 
@@ -336,14 +312,13 @@ def lists(c: Connection) -> list[dict]:
         "GROUP BY cl.id ORDER BY cl.archived, cl.kind, lower(cl.name)"), {"o": me.organization_id}).mappings()]
 
 
-def create_list(e: Engine, name: str, kind: str = "list", description: str | None = None) -> dict:
+def create_list(w: CrmWriter, name: str, kind: str = "list", description: str | None = None) -> dict:
     name = (name or "").strip()
     if not name or len(name) > 120:
         raise CrmError("list name must be 1-120 characters")
     if kind not in ("list", "campaign"):
         raise CrmError("kind must be list or campaign")
-    with e.begin() as c:
-        _refuse_during_upgrade(c)
+    with _tx(w) as c:
         me = _require(c)
         row = c.execute(text("INSERT INTO crm_list (organization_id, name, kind, description, created_by) "
                              "VALUES (CAST(:o AS uuid), :n, :k, :d, CAST(:u AS uuid)) "
@@ -362,17 +337,15 @@ def _list_of_org(c: Connection, me: Identity, list_id: int) -> tuple:
     return row
 
 
-def set_list_archived(e: Engine, list_id: int, archived: bool) -> None:
-    with e.begin() as c:
-        _refuse_during_upgrade(c)
+def set_list_archived(w: CrmWriter, list_id: int, archived: bool) -> None:
+    with _tx(w) as c:
         me = _require(c)
         _list_of_org(c, me, list_id)
         c.execute(text("UPDATE crm_list SET archived = :a WHERE id = :i"), {"a": archived, "i": list_id})
 
 
-def add_to_list(e: Engine, list_id: int, location_id: int) -> dict:
-    with e.begin() as c:
-        _refuse_during_upgrade(c)
+def add_to_list(w: CrmWriter, list_id: int, location_id: int) -> dict:
+    with _tx(w) as c:
         me = _require(c)
         lst = _list_of_org(c, me, list_id)
         _location_ok(c, location_id)
@@ -381,20 +354,19 @@ def add_to_list(e: Engine, list_id: int, location_id: int) -> dict:
         if added:
             _ensure_row(c, me, location_id)
             _log(c, me, location_id, "list_add", data={"list_id": list_id, "list": lst[1]})
-    with e.connect() as c:
+    with w.connect() as c:
         return state(c, location_id)
 
 
-def remove_from_list(e: Engine, list_id: int, location_id: int) -> dict:
-    with e.begin() as c:
-        _refuse_during_upgrade(c)
+def remove_from_list(w: CrmWriter, list_id: int, location_id: int) -> dict:
+    with _tx(w) as c:
         me = _require(c)
         lst = _list_of_org(c, me, list_id)
         gone = c.execute(text("DELETE FROM crm_list_item WHERE list_id = :i AND location_id = :l RETURNING list_id"),
                          {"i": list_id, "l": location_id}).first()
         if gone:
             _log(c, me, location_id, "list_remove", data={"list_id": list_id, "list": lst[1]})
-    with e.connect() as c:
+    with w.connect() as c:
         return state(c, location_id)
 
 

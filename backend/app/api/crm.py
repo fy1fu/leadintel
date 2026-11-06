@@ -18,7 +18,7 @@ def _engines():
     with e.connect() as c:
         if not crm.crm_available(c):
             raise HTTPException(409, detail="the sales features need a database upgrade (run Setup again)")
-    return e, crm.crm_engine(e)
+    return e, crm.crm_writer(e)
 
 
 def _run(fn, *a, **kw):
@@ -73,7 +73,9 @@ def me() -> dict:
         if not crm.crm_available(c):
             return {"available": False, "configured": False, "me": None}
         who = crm.identity(c)
-    return {"available": True, "configured": who is not None, "me": who.__dict__ if who else None}
+    w = crm.crm_writer(e)
+    return {"available": True, "configured": who is not None, "me": who.__dict__ if who else None,
+            "write_mode": w.mode, "write_mode_reason": w.reason}
 
 
 @router.post("/me")

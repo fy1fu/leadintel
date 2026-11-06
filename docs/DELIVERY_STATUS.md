@@ -22,17 +22,18 @@ Updated: 2026-11-06.
 | Schema | Migration `0006` (single head): `crm_organization`, `crm_user` (UUID ids), `crm_prospect` (one row per organization and business, unique), `crm_activity` (append-only), `crm_list`, `crm_list_item`. Additive; downgrade drops only these tables | done |
 | Service | Profile setup, claim / release / reassign, pipeline status, next action, follow-up date, notes and contact history (call, email, meeting, visit), lists and campaigns, dashboard | done |
 | Concurrency | Claim is a conditional update (two simultaneous claims: exactly one wins); edits use an optimistic `version` (stale saves get a clear "changed elsewhere" message) | done |
-| Write safety | CRM writes use their own engine, exempt from the maintenance-lock gate so sales work continues during Load Data; it refuses any write outside `crm_*` tables (including writes inside CTEs) and any structure change, and refuses all writes while `db upgrade` runs | done |
+| Write safety | Security review (see [security/M2_CRM_WRITE_PATH.md](security/M2_CRM_WRITE_PATH.md)): the original text-only guard was bypassable (8 demonstrated ways) and is replaced. Default: CRM writes take the maintenance lock (B0 unchanged; "paused" during Load Data). Writes during Load Data only through a separate `leadintel_crm` login that PostgreSQL restricts to the CRM tables, verified by a self-check before use; any doubt falls back to the lock. Upgrades exclude CRM writes via an advisory key | done (`03080b3f` + security fix) |
 | API | `/api/crm/*` (token and same-origin rules apply to every write); sales filters on list, counts, map and export (`sales`, `claim`, `follow_up`, `list_id`, sort by follow-up); CRM columns in the CSV export | done |
 | Interface | Profile dialog, Sales section in the business view (claim, status, next action, follow-up date, activity log and timeline, lists), sales filters and list tags, Sales overview (pipeline, follow-ups, recent activity, lists and campaigns) | done |
-| Windows | M2 TEST ZIP and checklist | not built yet - installing it runs migration 0006 on the real Friend Edition database, which needs explicit approval |
-
-Decision to review: the CRM write engine is exempt from the B0 commit gate (narrowly, as above). Without the
-exemption, claims and notes would be blocked for the whole of a Load Data run.
+| Setup | Creates the `leadintel_crm` login (no role attributes, NOINHERIT, own DPAPI secret); `db upgrade` sets its privileges | done, Windows check pending |
+| Windows | M2 TEST ZIP and combined M1+M2 checklist on a disposable installation | in progress - never on the real Friend Edition without approval |
 
 ## Test results (latest)
 
-- Full suite on `leadintel_test` (synthetic data, migrated to 0006): see the latest commit message for counts.
+- Full suite on `leadintel_test` (synthetic data, migrated to 0006): 779 passed, 6 skipped (after the security fix).
+- CRM security (`tests/test_crm_security.py`): 31 attacks refused by PostgreSQL with no application check and again
+  through the application; 10 kinds of tampering each force the maintenance-lock mode; Load Data / upgrade
+  interplay; the real `db upgrade` command sets exactly the CRM privileges.
 - M2 tests (`tests/test_crm.py`): schema and single Alembic head, downgrade/upgrade of 0006 keeps business rows,
   identity, claims (8 concurrent users: exactly one wins), permissions, versions, rollback on failure, activities,
   lists, dashboard, write guard, upgrade refusal, API token rules, sales filters agree across list / count /
@@ -47,6 +48,13 @@ exemption, claims and notes would be blocked for the whole of a Load Data run.
 - Everything in the M1 checklist (map under the CSP, Edge app window, F11 / `-Fullscreen`, scaling,
   `test-dataload.ps1`, upgrade keeps data).
 - M2: upgrade to 0006 on a copy of real data, then claim / notes / overview on Windows.
+
+## Open security findings
+
+- R1 (low): the CRM login can create temporary tables / large objects and take advisory locks (PostgreSQL defaults;
+  no business data). Pinned by a test.
+- R2 (pre-existing): B0 can allow one commit after a lost lock; fencing token (B0.5) planned as migration 0007.
+- R3: the Setup step that creates the sales login has not run on Windows yet (falls back safely if it fails).
 
 ## Known issues / limitations
 
@@ -67,5 +75,5 @@ exemption, claims and notes would be blocked for the whole of a Load Data run.
 
 ## Next exact action
 
-Commit M2 locally; build an M2 TEST ZIP (not installed without approval); continue parallel research
-(website-viewing isolation, revenue data, directory sources, OAuth) and M3 preparation.
+Commit the security fix; rebuild and verify the M2 TEST ZIP; write the combined M1+M2 Windows procedure for a
+disposable installation; M3 preparation and research notes.

@@ -198,6 +198,24 @@ WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '$PgDatabase')\gexec
         }
     }
 
+    # M2: a separate login for sales (CRM) changes. 'db upgrade' gives it the CRM tables only, and LeadIntel checks the
+    # restriction on every start before relying on it. Without it, sales changes simply pause while Load Data runs.
+    if (-not (Test-Secret 'db_crm')) { Save-PlainSecret 'db_crm' (New-RandomSecret) }
+    $crmPw = Get-Secret 'db_crm'
+    $crmSql = @"
+DO `$`$BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '$PgCrmUser') THEN
+    CREATE ROLE $PgCrmUser LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT PASSWORD '$crmPw';
+  ELSE
+    ALTER ROLE $PgCrmUser LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT PASSWORD '$crmPw';
+  END IF;
+END`$`$;
+"@
+    if ((Invoke-Sql 'postgres' $crmSql) -ne 0) {
+        Write-Note 'Warning: the sales account could not be prepared. LeadIntel still works; sales changes pause while Load Data runs.'
+    }
+    $crmPw = $null
+
     Write-Note 'Bringing the database schema up to date...'
     Set-AppEnvironment $state
     try {

@@ -127,8 +127,18 @@ def _business(args) -> int:
         from app.db.session import make_engine
         if args.action == "upgrade":
             # Alembic uses its own engine to the same database; its commits pass the gate under this lock.
-            with locked(make_engine(settings), "db upgrade"):
-                command.upgrade(cfg, "head")
+            engine = make_engine(settings)
+            with locked(engine, "db upgrade"):
+                from app.crm.access import crm_role_from_url, exclusive_upgrade, grant_crm_privileges
+                with engine.connect() as hold:            # pauses independent CRM writes for the upgrade (M2)
+                    with exclusive_upgrade(hold):
+                        command.upgrade(cfg, "head")
+                        role = crm_role_from_url(settings.crm_database_url)
+                        if role:   # the CRM login gets exactly the CRM privileges, re-set at every upgrade
+                            with engine.begin() as c:
+                                ok = grant_crm_privileges(c, role)
+                            print(f"CRM login {role}: " + ("privileges set" if ok else
+                                  "not found - sales changes will pause while Load Data runs (run Setup again)"))
         else:
             # Reading only: Alembic would commit its (empty) transaction, which the fail-closed gate refuses
             # without the lock. Inside an explicit transaction Alembic does not commit; LeadIntel rolls it back.

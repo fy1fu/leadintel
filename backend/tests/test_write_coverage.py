@@ -95,10 +95,10 @@ def _sources():
 
 
 ENGINE_FACTORIES = {"app/db/session.py", "app/db/locks.py", "app/net/store.py", "migrations/env.py",
-                    "app/crm/service.py"}   # M2: gate-exempt CRM engine, writes limited to crm_* (tests/test_crm.py)
+                    "app/crm/access.py"}   # M2: restricted CRM login, verified by the database (test_crm_security.py)
 # Engines exempt from the commit gate, each with a reason; a new one needs review.
 EXEMPT_ENGINES = {"app/db/locks.py": "the lock connection itself", "app/net/store.py": "diagnostics store (D9)",
-                  "app/crm/service.py": "CRM writes, refused outside crm_* tables and during db upgrade"}
+                  "app/crm/access.py": "CRM login that the database restricts to the CRM tables (self_check)"}
 COMMIT_SITES = {"app/cli.py", "app/pipeline/discover.py", "app/db/session.py",
                 "app/sources/btr/storage.py"}   # import-btr (Phase B0), runs under the lock and the gate
 # Modules that write inside the managed data folder; each must call ensure_write_allowed.

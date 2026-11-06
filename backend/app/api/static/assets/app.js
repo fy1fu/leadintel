@@ -34,7 +34,8 @@ async function api(path, opts = {}) {
   const r = await fetch(path, {...opts, headers: {...(opts.headers || {}), ...(opts.method && opts.method !== "GET" ? {"X-LeadIntel-Token": TOKEN} : {})}});
   if (!r.ok) {
     const detail = (await r.json().catch(() => ({}))).detail;
-    throw new Error(typeof detail === "string" ? detail : `${r.status} ${r.statusText}`);
+    const err = new Error(typeof detail === "string" ? detail : `${r.status} ${r.statusText}`);
+    err.status = r.status; throw err;
   }
   return r.json();
 }
@@ -496,7 +497,8 @@ async function salesWrite(path, opts, okMsg) {
     return true;
   } catch (e) {
     toast(e.message);
-    if (state.selected === id) loadSales(id);          // show the current state after a conflict
+    // After a conflict show the current state; otherwise (e.g. paused during Load Data) keep what was typed.
+    if (e.status === 409 && state.selected === id) loadSales(id);
     return false;
   }
 }

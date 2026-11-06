@@ -10,14 +10,12 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
-from sqlalchemy.pool import NullPool
 
 from app.api import business
 from app.api.main import create_app
 from app.crm import service as crm
-from app.db.locks import LOCK_KEY, exempt_engine
 from app.db.models import CRM_ACTIVITY_KINDS, CRM_STATUSES, Location
 from app.normalize.core import name_norm
 
@@ -38,7 +36,9 @@ def biz(db):
         locs[2].merged_into_id = locs[0].id
         s.commit()
         ids = [loc.id for loc in locs]
-    return SimpleNamespace(db=db, ce=crm.crm_engine(db), a=ids[0], b=ids[1], merged=ids[2])
+    from app.crm import access
+    access.forget_writers()        # lock mode: the default (test_crm_security.py covers the restricted login)
+    return SimpleNamespace(db=db, ce=crm.crm_writer(db, ""), a=ids[0], b=ids[1], merged=ids[2])
 
 
 @pytest.fixture
@@ -328,49 +328,6 @@ def test_dashboard_before_setup(biz):
         assert crm.dashboard(c) == {"configured": False}
 
 
-# ---------------------------------------------------------------- write guard and maintenance lock
-@pytest.mark.parametrize("sql", [
-    "UPDATE location SET display_name = 'x'",
-    "WITH x AS (UPDATE location SET display_name = 'x' RETURNING id) SELECT count(*) FROM x",
-    "DELETE FROM public.score",
-    'INSERT INTO "location" (display_name, name_norm) VALUES (\'x\', \'x\')',
-    "TRUNCATE crm_list",
-    "ALTER TABLE crm_list ADD COLUMN x int",
-])
-def test_crm_engine_cannot_write_business_tables_or_change_structure(biz, sql):
-    before = _business_snapshot(biz.db)
-    with pytest.raises(Exception, match="CRM connection may"):
-        with biz.ce.begin() as c:
-            c.execute(text(sql))
-    assert _business_snapshot(biz.db) == before
-
-
-def _hold_lock(db, operation):
-    e = exempt_engine(create_engine(db.url, poolclass=NullPool, isolation_level="AUTOCOMMIT",
-                                    connect_args={"application_name": f"leadintel:{operation}:4242"}))
-    conn = e.connect()
-    assert conn.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": LOCK_KEY}).scalar()
-    return e, conn
-
-
-def test_crm_writes_are_refused_during_db_upgrade_but_work_during_load_data(biz, me):
-    e, conn = _hold_lock(biz.db, "db upgrade")
-    try:
-        with pytest.raises(crm.UpgradeInProgress):
-            crm.claim(biz.ce, biz.a)
-        with pytest.raises(crm.UpgradeInProgress):
-            crm.add_activity(biz.ce, biz.a, "note", "x")
-    finally:
-        conn.close()
-        e.dispose()
-    e, conn = _hold_lock(biz.db, "load-data")
-    try:
-        assert crm.claim(biz.ce, biz.a)["owned_by_me"]
-    finally:
-        conn.close()
-        e.dispose()
-
-
 # ---------------------------------------------------------------- API
 @pytest.fixture
 def api(biz, monkeypatch):
@@ -398,7 +355,9 @@ def test_api_every_write_needs_the_token(api):
 
 def test_api_full_flow(api):
     c, biz = api
-    assert c.get("/api/crm/me").json() == {"available": True, "configured": False, "me": None}
+    first = c.get("/api/crm/me").json()
+    assert {k: first[k] for k in ("available", "configured", "me")} == {"available": True, "configured": False, "me": None}
+    assert first["write_mode"] == "shared_lock"            # no separate CRM login configured: maintenance lock
     assert c.post(f"/api/crm/prospects/{biz.a}/claim", headers=H).status_code == 409    # profile first
     me = c.post("/api/crm/me", json={"display_name": "Test Seller", "initials": "TS"}, headers=H).json()["me"]
     assert me["initials"] == "TS"

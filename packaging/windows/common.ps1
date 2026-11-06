@@ -32,6 +32,7 @@ $LI = @{
 }
 $PgSuperUser = 'li_super'
 $PgAppUser = 'leadintel'
+$PgCrmUser = 'leadintel_crm'      # M2: sales changes only (privileges set by 'db upgrade', verified by LeadIntel)
 $PgDatabase = 'leadintel'
 
 function Write-Step([string]$msg) { Write-Host "`n== $msg" -ForegroundColor Cyan }
@@ -212,6 +213,9 @@ function Set-AppEnvironment([hashtable]$state, [switch]$ReadOnly) {
     if (-not $pw) { Stop-WithError 'the database credentials are missing. Run Setup again.' }
     $env:PGPASSWORD = $pw
     $env:LEADINTEL_DATABASE_URL = "postgresql+psycopg://$PgAppUser@127.0.0.1:$($state['pg_port'])/$PgDatabase"
+    $crmPw = Get-Secret 'db_crm'           # hex only, so it needs no escaping in the URL
+    if ($crmPw) { $env:LEADINTEL_CRM_DATABASE_URL = "postgresql+psycopg://${PgCrmUser}:$crmPw@127.0.0.1:$($state['pg_port'])/$PgDatabase" }
+    else { Remove-Item Env:LEADINTEL_CRM_DATABASE_URL -ErrorAction SilentlyContinue }
     $env:LEADINTEL_DATA_DIR = $LI.Data
     $env:LEADINTEL_CONFIG_DIR = Join-Path $LI.App 'config'
     $env:PYTHONDONTWRITEBYTECODE = '1'
@@ -234,7 +238,8 @@ function Get-SunbizLogin {
     return $null
 }
 function Clear-AppEnvironment {
-    foreach ($n in 'PGPASSWORD', 'PGOPTIONS', 'SUNBIZ_SFTP_USER', 'SUNBIZ_SFTP_PASSWORD', 'LEADINTEL_DATABASE_URL') {
+    foreach ($n in 'PGPASSWORD', 'PGOPTIONS', 'SUNBIZ_SFTP_USER', 'SUNBIZ_SFTP_PASSWORD', 'LEADINTEL_DATABASE_URL',
+                'LEADINTEL_CRM_DATABASE_URL') {
         Remove-Item "Env:$n" -ErrorAction SilentlyContinue
     }
 }

@@ -28,6 +28,9 @@ class Settings:
     # Network diagnostics use their OWN store so they keep working when the main business
     # database is down or not yet set up. Never derived from LEADINTEL_DATABASE_URL.
     netdiag_db_url: str | None = field(default_factory=lambda: os.environ.get("LEADINTEL_NETDIAG_DB_URL"))
+    # Optional separate login for CRM writes (M2). Used only if the database restricts it to the CRM tables
+    # (app.crm.access.self_check); otherwise CRM writes take the maintenance lock like every other writer.
+    crm_database_url: str | None = field(default_factory=lambda: os.environ.get("LEADINTEL_CRM_DATABASE_URL"))
 
     # Egress proxy. Default: honour the standard HTTPS_PROXY / NO_PROXY variables.
     proxy_url: str | None = field(default_factory=lambda: None if _env_bool("LEADINTEL_IGNORE_PROXY")
