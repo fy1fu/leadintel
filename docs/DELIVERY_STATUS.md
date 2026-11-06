@@ -1,7 +1,7 @@
 # LeadIntel delivery status
 
 Engineering progress tracker (kept short; the plan lives in [PLAN.md](PLAN.md) and [ROADMAP.md](ROADMAP.md)).
-Updated: 2026-11-06 (M3 finalization).
+Updated: 2026-11-06 (M3 complete; Windows TEST session reported successful).
 
 ## M1 - salesperson interface: accepted as the baseline (2026-11-06)
 
@@ -11,11 +11,11 @@ Updated: 2026-11-06 (M3 finalization).
 | S2a | Shared `ProspectFilter`; paginated list, summary and map-point endpoints | done | `bf181e6c` |
 | S2b | Verified on PostgreSQL (`leadintel_test`, synthetic data); list query rewrite (deep pages 1.25 s -> 0.18 s at 100k rows); `limit=0` compatibility | done | `8d1b6fba` |
 | S3 | CSV export endpoint and CLI export on the same filter | done | `8d1b6fba` |
-| S4-S7 | Interface redesign: filter panel, paging, honest counts, map caption, salesperson detail view, Advanced section, themes, keyboard use | done, Windows check pending | `b64ba3a9` |
-| S8 | Edge app-mode window (maximized), full-screen button and F11, `-Fullscreen` test switch, default-browser fallback | done, Windows check pending | `aa4eb2de` |
-| S9 | M1 TEST ZIP (`LeadIntel-1.1.0-m1-TEST.zip`, from `aa4eb2de`) and the consolidated Windows checklist | handed over; results pending | - |
+| S4-S7 | Interface redesign: filter panel, paging, honest counts, map caption, salesperson detail view, Advanced section, themes, keyboard use | done; Windows reported successful by the user (combined M1 → M3 session, 2026-11-06) | `b64ba3a9` |
+| S8 | Edge app-mode window (maximized), full-screen button and F11, `-Fullscreen` test switch, default-browser fallback | done; Windows reported successful by the user (combined M1 → M3 session, 2026-11-06) | `aa4eb2de` |
+| S9 | M1 TEST ZIP (`LeadIntel-1.1.0-m1-TEST.zip`, from `aa4eb2de`) and the consolidated Windows checklist | handed over; superseded by the combined M1 → M3 session | - |
 
-## M2 - local CRM (single user): done, Windows check pending
+## M2 - local CRM (single user): done; Windows session reported successful
 
 | Part | What | State |
 |---|---|---|
@@ -25,9 +25,9 @@ Updated: 2026-11-06 (M3 finalization).
 | Write safety | Security review (see [security/M2_CRM_WRITE_PATH.md](security/M2_CRM_WRITE_PATH.md)): the original text-only guard was bypassable (8 demonstrated ways) and is replaced. Default: CRM writes take the maintenance lock (B0 unchanged; "paused" during Load Data). Writes during Load Data only through a separate `leadintel_crm` login that PostgreSQL restricts to the CRM tables, verified by a self-check before use; any doubt falls back to the lock. Upgrades exclude CRM writes via an advisory key | done (`03080b3f`, fix `4edf41ac`) |
 | API | `/api/crm/*` (token and same-origin rules apply to every write); sales filters on list, counts, map and export (`sales`, `claim`, `follow_up`, `list_id`, sort by follow-up); CRM columns in the CSV export | done |
 | Interface | Profile dialog, Sales section in the business view (claim, status, next action, follow-up date, activity log and timeline, lists), sales filters and list tags, Sales overview (pipeline, follow-ups, recent activity, lists and campaigns) | done |
-| Setup | Creates the `leadintel_crm` login (no role attributes, NOINHERIT, own DPAPI secret); `db upgrade` sets its privileges | done, Windows check pending |
+| Setup | Creates the `leadintel_crm` login (no role attributes, NOINHERIT, own DPAPI secret); `db upgrade` sets its privileges | done; Windows reported successful by the user (combined M1 → M3 session, 2026-11-06) |
 | Builder | Secret scan: one exact allow-list entry for the DPAPI-backed sales URL template in `common.ps1`; patterns unchanged | done (`ffa76b92`) |
-| Windows | Combined M1 → M3 procedure on a separate Windows test account ([windows/M1_M3_TEST_PROCEDURE.md](windows/M1_M3_TEST_PROCEDURE.md)); profile dialog states whether sales changes continue during Load Data | procedure ready; no TEST ZIP built since M1 (awaiting your decision) |
+| Windows | Combined M1 → M3 procedure on a separate Windows test account ([windows/M1_M3_TEST_PROCEDURE.md](windows/M1_M3_TEST_PROCEDURE.md)); profile dialog states whether sales changes continue during Load Data | reported successful by the user (combined M1 → M3 session, 2026-11-06) with `LeadIntel-1.3.0-m3-TEST.zip` |
 
 ## Test results (latest)
 
@@ -156,17 +156,14 @@ Updated: 2026-11-06 (M3 finalization).
   no CSP violations; no horizontal overflow at 1366 / 1280 / 800 px; light and dark.
 - Performance at 100k synthetic locations (M1): list page 1 79 ms, page 400 182 ms, count 124 ms.
 
-## Windows checks still required
+## Windows validation
 
-All in one session on a separate Windows test account: [windows/M1_M3_TEST_PROCEDURE.md](windows/M1_M3_TEST_PROCEDURE.md).
-- M1: map under the CSP, Edge app window, F11 / `-Fullscreen`, scaling, `test-dataload.ps1`, upgrade keeps data.
-- M2: upgrade (0006) keeps data; claim / notes / overview; the sales login created by Setup.
-- M3 Search Area: area panel, marker drag and pick-on-map with real tiles, circle, units, Back/Forward; ZIP/city
-  search after one Load Data; street addresses via the free Census geocoder.
-- M3 website audits: Playwright wheels install from the lock; audits start Microsoft Edge (`msedge` channel, no
-  browser download); run / report / screenshots / re-run / interrupted / Load Data exclusion on a real website.
-- M3 saved searches.
-Not yet done: no M3 TEST ZIP has been built (needs your go-ahead), so none of the above has run on Windows.
+The combined session in [windows/M1_M3_TEST_PROCEDURE.md](windows/M1_M3_TEST_PROCEDURE.md) (fresh M1 install, upgrade
+to M3 with migrations 0006 and 0007, then M1, M2 sales, Search Area, website audits with Edge, saved searches) was
+run on a separate Windows test account with `LeadIntel-1.3.0-m3-TEST.zip` (from `bebe72f`, 497,076 bytes, SHA-256
+`7095416ab10cfeb89167bc683adeddb2a170124a7d4210d36adfa79e934cfca6`) and **reported successful by the user**. Only that
+summary confirmation was given: per-step results, business counts, `test-dataload.ps1` output and Setup output were
+not recorded here. The real Friend Edition has not been upgraded.
 
 ## Open security findings
 
@@ -174,7 +171,8 @@ Not yet done: no M3 TEST ZIP has been built (needs your go-ahead), so none of th
   no business data). Pinned by a test.
 - R2 (pre-existing): B0 can allow one commit after a lost lock; fencing token (B0.5) deferred, next free migration
   number after 0007.
-- R3: the Setup step that creates the sales login has not run on Windows yet (falls back safely if it fails).
+- R3: the Setup step that creates the sales login ran in the Windows test session (reported successful; the profile
+  dialog's write mode was not reported separately). It falls back safely to the lock if it fails.
 - M3 crawler: all browser traffic through the egress proxy (SSRF / DNS rebinding); only GET/HEAD leave the browser;
   fresh browser per audit, context per site, no stored cookies, service workers blocked, downloads refused, pop-ups
   closed; no form is ever filled or submitted; the audited site's JavaScript runs only in that isolated browser,
@@ -198,8 +196,7 @@ Not yet done: no M3 TEST ZIP has been built (needs your go-ahead), so none of th
 ## Outstanding approvals (high-impact)
 
 - Push of the local `phase-1` commits (GitHub is at `b20f99a`).
-- Building the M3 TEST ZIP (`--version 1.3.0-m3-TEST --include-dev-tests`) for the Windows session; installing it
-  only on a separate Windows test account.
+- Any further ZIP (TEST or release). The M3 TEST ZIP was built with approval and tested on a separate account.
   (No M2 TEST ZIP exists: the one built from `03080b3f` was deleted before the security fix and never distributed.)
 - Installing any M2/M3 build on the real Friend Edition (applies migrations 0006 and 0007 to the real database).
 - Final distributable release ZIP rebuild.
@@ -212,15 +209,15 @@ Plan and decisions: [research/M3_PREP.md](research/M3_PREP.md). WQS definition: 
 
 | Step | What | State |
 |---|---|---|
-| 1 | Search Area and center search | **done** (`9ee6e0a3`, `23ae3815`, `0dd3c42a`, `e2c17d2c`); Windows check pending |
+| 1 | Search Area and center search | **done** (`9ee6e0a3`, `23ae3815`, `0dd3c42a`, `e2c17d2c`); Windows session reported successful |
 | 2 | Browser egress proxy | **done** (`b70e8846`) |
 | 3 | Crawl runner | **done** (`ac6d1f71`; hardening in `8213a93`) |
 | 4 | Website checks: 26 criteria over 7 dimensions, axe-core 4.14.0, browser timing, domain history, 33 fixture sites, watchdog | **done** (`f9e9dca3`, `8213a93`) |
 | 5 | Migration 0007 and storage; audit service (lock, one at a time, interrupted/failed handling, retention); `crawl` command; API | **done** (`c06b876`; `crawl` command `47f486f`) |
 | 6 | WQS wqs-1.0 with confidence and explanations (provisional) | **done** (`c06b876`); BOS/LPS inputs and a WQS filter not started |
 | 7 | Peer benchmark (≥ 8 peers, county → target region) | **done** (`c06b876`); Census revenue prior not started |
-| 8 | Evidence viewer (report dialog, screenshots, history) | **built and walked through, uncommitted** (awaiting approval); `mailto:` not started |
-| 9 | Saved searches (server done in `c06b876`; dialog uncommitted); calibration tooling done; human labels not collected | partly done |
+| 8 | Evidence viewer (report dialog, screenshots, history) | **done** (`ba67b67`); `mailto:` not started |
+| 9 | Saved searches (server `c06b876`, interface `ba67b67`); calibration tooling done; human labels not collected | done except labels |
 
 Decisions recorded 2026-11-06 (still in force):
 - 0007 is used by M3 (audits and saved searches); B0.5 is deferred to the next free number.
@@ -236,6 +233,5 @@ Screenshots live in `<data>/crawl/` (path, sha256 and size in the database). Tes
 
 ## Next exact action
 
-1. Your approval of the pending commits (docs, interface, Windows lock and procedure), one at a time.
-2. Your go-ahead to build the M3 TEST ZIP, then the Windows session from the procedure above.
-3. Then the next milestone: see [HANDOFF.md](HANDOFF.md).
+See [HANDOFF.md](HANDOFF.md) "Next steps": push decision, real Friend Edition upgrade decision, WQS calibration with
+human labels, then versioned website inputs to BOS/LPS before M4.

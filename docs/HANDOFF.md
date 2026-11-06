@@ -1,72 +1,79 @@
-# LeadIntel — development handoff (for a fresh session)
+# LeadIntel — development handoff (start here)
 
-Read this first, then [DELIVERY_STATUS.md](DELIVERY_STATUS.md) (authoritative status, tests, approvals). Do not
-re-plan or re-derive what is below; the design documents are [PLAN.md](PLAN.md), [ROADMAP.md](ROADMAP.md),
-[SCORING.md](SCORING.md), [research/M3_PREP.md](research/M3_PREP.md) and [security/M2_CRM_WRITE_PATH.md](security/M2_CRM_WRITE_PATH.md).
+State at handoff: 2026-11-06. Authoritative detail: [DELIVERY_STATUS.md](DELIVERY_STATUS.md). Design: [PLAN.md](PLAN.md),
+[ROADMAP.md](ROADMAP.md), [SCORING.md](SCORING.md), [research/M3_PREP.md](research/M3_PREP.md),
+[security/M2_CRM_WRITE_PATH.md](security/M2_CRM_WRITE_PATH.md). Do not re-plan what is already decided there.
 
 ## Product
 
 Local-first prospecting tool for a small web-design business in north-east Florida (Duval, Clay, St. Johns). It
-finds local businesses from public data, scores how promising each is as a website customer (BOS, LPS), audits
-their existing websites (WQS), and tracks the sales work (local CRM). Runs on one Windows PC ("Friend Edition":
-per-user install, local PostgreSQL + PostGIS, Edge app window). No cloud, no paid services without approval.
+finds local businesses from public data, scores them as website customers (BOS, LPS), audits their existing websites
+(WQS), and tracks the sales work (local CRM). Runs on one Windows PC ("Friend Edition": per-user install, local
+PostgreSQL + PostGIS, Edge app window). No cloud; no paid services without approval.
 
-## Repository
+## Repository state
 
-- `/home/user/leadintel`, branch `phase-1`, local only; GitHub `origin/phase-1` is at `b20f99a` (local is ahead;
-  run `git log --oneline origin/phase-1..HEAD`). Never push without approval.
-- Backend: `backend/` (FastAPI, SQLAlchemy 2, Alembic head **0007**, psycopg3, static JS frontend in
-  `backend/app/api/static`, MapLibre 4.7.1). CLI: `backend/app/cli.py` (Windows: `packaging/windows/run_cli.py`).
-- Windows packaging: `packaging/windows/` (Setup/launch/Load Data PowerShell, `build_friend_zip.py`, hashed lock
-  `requirements-win-py313.lock`).
+- `/home/user/leadintel`, branch `phase-1`, HEAD `bebe72f`; working tree clean except this handoff update (see
+  `git status`). 30 local commits are **not pushed**: GitHub `origin/phase-1` is at `b20f99a`. Nothing merged.
+- Backend `backend/`: FastAPI, SQLAlchemy 2, psycopg3, Alembic head **0007**, static JS frontend
+  (`backend/app/api/static`, MapLibre 4.7.1). CLI `backend/app/cli.py` (Windows: `packaging/windows/run_cli.py`).
+- Windows packaging `packaging/windows/`: Setup / launch / Load Data scripts, `build_friend_zip.py`, hashed lock.
+- Last package: `dist/LeadIntel-1.3.0-m3-TEST.zip` (TEST build from `bebe72f`, 497,076 bytes, SHA-256
+  `7095416ab10cfeb89167bc683adeddb2a170124a7d4210d36adfa79e934cfca6`; `dist/` is not tracked).
 
-## Key design rules (keep them)
+## Completed
 
-- B0 maintenance lock + fail-closed commit gate: every business write and every managed-file write happens under
-  `maintenance_lock`; `tests/test_write_coverage.py` classifies every CLI command and file/commit site.
-- CRM writes: maintenance lock by default; a separate `leadintel_crm` login restricted by PostgreSQL to the CRM
-  tables (`self_check`) may write during Load Data. Do not widen it.
-- One shared `ProspectFilter` (`app/api/filters.py`) for list, counts, map, export and saved searches; the Search
-  Area radius is canonical in metres (400 m – 160,934.4 m).
-- Crawling: user-initiated, one audit at a time, robots.txt, ≤ 15 pages, 1 s per host, browser only through
-  `BrowserEgressProxy` (SSRF / DNS rebinding), GET/HEAD only, watchdog against hung pages, no form filling.
-  Development crawls only against synthetic local sites (127.0.0.2 via the test-only policy hook).
-- Unknown is never poor: not-assessed criteria never lower WQS; inaccessible sites get no score.
-- WQS `wqs-1.0` is **provisional** until human calibration; BOS/LPS must not change silently (versioned changes only).
-- Screenshots in `<data>/crawl/` with sha256 in the database; newest 3 audits per business keep them.
+Phase 1 data pipeline; B0 maintenance lock; M1 salesperson interface; M2 local CRM (with the restricted sales login);
+M3: Search Area and center search, browser egress proxy, crawl runner, website checks (26 criteria, axe-core 4.14.0,
+browser timing, domain history), migration 0007 (audits, pages, artifacts, findings, recommendations, benchmarks,
+saved searches), audit service + API + `crawl` command, WQS `wqs-1.0` (provisional), recommendations, peer
+benchmark, audit report and saved-search interface, calibration tooling.
 
-## Status
+Verification: full suite on `leadintel_test` at `bebe72f`: **1055 passed, 6 skipped, 0 failed**. Windows: the
+combined M1 → M3 session (`docs/windows/M1_M3_TEST_PROCEDURE.md`) on a separate test account with the TEST ZIP above
+was **reported successful by the user** (summary confirmation; per-step results, counts and Setup output were not
+recorded). The real Friend Edition has not been upgraded.
 
-- Done: Phase 1 data pipeline, B0, M1 interface, M2 CRM, M3 Search Area + center search, egress proxy, crawl
-  runner, website checks (26 criteria, axe-core, timing, domain history), migration 0007, audit service/API/`crawl`
-  command, WQS, recommendations, benchmark, saved searches (server), calibration tooling.
-- Built and tested but awaiting commit approval at handoff time: the audit report and saved-search interface, the
-  Windows lock with Playwright, the combined Windows procedure — check `git status` and DELIVERY_STATUS.md.
-- Not done: human WQS labels (60–100 real sites), Census revenue prior, WQS as BOS/LPS input or list filter,
-  `mailto:` outreach, M3 TEST ZIP, every Windows check.
+## Rules to keep
+
+- Every business write and managed-file write under `maintenance_lock` (fail-closed commit gate);
+  `tests/test_write_coverage.py` must classify every new command and write site.
+- CRM writes: lock by default; the `leadintel_crm` login is restricted by PostgreSQL to CRM tables. Do not widen it.
+- One shared `ProspectFilter` for list, counts, map, export and saved searches; radius canonical in metres.
+- Crawling: user-initiated, one audit at a time, robots.txt, ≤ 15 pages, 1 s per host, only through
+  `BrowserEgressProxy`, GET/HEAD only, watchdog, never fill or submit forms, never frame the live site.
+- Unknown is never poor; WQS stays "provisional" until calibrated; BOS/LPS change only by versioned, explained steps.
+
+## Known limitations / needs attention
+
+- WQS not calibrated (needs 60–100 human-rated real sites; target Spearman ≥ 0.7). Visual design is never assessed.
+- BOS/LPS do not use website evidence yet; no WQS list filter; Census revenue prior and `mailto:` outreach not built.
+- One timing-sensitive CRM test failed once under load (then passed repeatedly); watch it.
+- Security notes R1–R3 and the licensing review before wider distribution: see DELIVERY_STATUS.md.
+- The watchdog depends on a Playwright internal; a test fails if a Playwright upgrade moves it.
 
 ## Testing
 
-- PostgreSQL dev cluster (start if stopped):
+- Start PostgreSQL if stopped:
   `su postgres -s /bin/bash -c "/usr/lib/postgresql/16/bin/pg_ctl -D /var/lib/postgresql/leadintel-dev/data -o '-p 54329 -c listen_addresses=127.0.0.1 -k /tmp' -l /var/lib/postgresql/leadintel-dev/log.txt -w start"`
-- Full suite (only the `_test` database; the fixtures refuse anything else):
+- Full suite (about 6–8 min; fixtures refuse any database not ending in `_test`):
   `cd backend && env -u LEADINTEL_DATABASE_URL -u LEADINTEL_CRM_DATABASE_URL -u LEADINTEL_DATA_DIR LEADINTEL_TEST_DATABASE_URL=postgresql+psycopg://postgres@127.0.0.1:54329/leadintel_test .venv/bin/python -m pytest -q -p no:cacheprovider`
-  (about 8 minutes; Playwright 1.63.0 and its Chromium are installed in the dev venv).
-- Latest result: in DELIVERY_STATUS.md.
 
-## Approval boundaries (ask first)
+## Approval required (ask first)
 
-Push or merge; any real database change or migration (the dev `leadintel` database and the Windows Friend Edition
-database are off-limits — tests use `leadintel_test` only); installing on the real Friend Edition; destructive data
-operations; paid providers or recurring costs; OAuth; public deployment; weakening security; building any ZIP
-(TEST or release); crawling real prospect websites in bulk. Commits: signed (`-S`), author
-Levi Daniel (the email as given by the user, not in this file), explicit file staging, and **show the staged list, diff summary, checks and
-message, then wait for approval** before committing. No model names in repository content.
+Push / merge; any change or migration of a real database (the dev `leadintel` database and the Windows Friend
+Edition database; tests use `leadintel_test` only); installing on the real Friend Edition; building any ZIP;
+destructive data operations; paid providers or recurring costs; OAuth; public deployment; weakening security; crawling
+real prospect websites in bulk. Commits: signed, author Levi Daniel, explicit file staging; show the staged files,
+diff summary, `git diff --cached --check` and the message, then **wait for approval**. No model names in repository
+content.
 
-## Next milestone
+## Next steps
 
-1. After approval: build the M3 TEST ZIP and run the Windows session (`docs/windows/M1_M3_TEST_PROCEDURE.md`); fix
-   what it finds.
-2. WQS calibration with real human labels (export → rate → report); keep "provisional" until the targets are met.
-3. Then, as versioned and explainable changes: website evidence into BOS/LPS, a WQS list filter, the Census
-   revenue prior — before starting M4 (see ROADMAP.md).
+1. Decide whether to push the 30 local commits to GitHub (approval).
+2. Decide whether and when to upgrade the real Friend Edition to M3 (applies migrations 0006 and 0007; take the
+   automatic backup; approval).
+3. WQS calibration: `leadintel wqs-calibration export`, rate 60–100 real sites (about 20 twice), `report`; keep
+   "provisional" until the targets are met.
+4. Then, as versioned and explained changes: website evidence into BOS/LPS, a WQS list filter, the Census revenue
+   prior. M4 (competitor analysis, campaigns via `mailto:`) only after that — see ROADMAP.md.

@@ -18,7 +18,7 @@ Packages (TEST builds only — not for distribution):
 | Package | SHA-256 | Built from |
 |---|---|---|
 | `LeadIntel-1.1.0-m1-TEST.zip` | `89EE97CC3D428B2641FFCBCDB8ED8A6C7A3C5083193433C2BB99807635D26208` | `aa4eb2de` |
-| `LeadIntel-1.3.0-m3-TEST.zip` | *(see the build note sent with the ZIP)* | *(commit in the build note)* |
+| `LeadIntel-1.3.0-m3-TEST.zip` | `7095416AB10CFEB89167BC683ADEDDB2A170124A7D4210D36ADFA79E934CFCA6` | `bebe72f` |
 
 The M3 TEST build contains everything from M2, so no separate M2 package is needed.
 
