@@ -1,0 +1,8 @@
+{
+  "_comment": "Florida Department of State publishes this login for everyone on its official Data Downloads page; it is not a private credential. LeadIntel uses it to download Sunbiz bulk files from sftp.floridados.gov (HTTPS). A login saved with 'setup.ps1 -SunbizLogin' overrides it, for example if Florida changes it.",
+  "source_page": "https://dos.fl.gov/sunbiz/other-services/data-downloads/",
+  "host": "sftp.floridados.gov",
+  "user": "Public",
+  "password": "PubAccess1845!",
+  "provided": "2026-11-05, by the project owner from the official page"
+}

@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="leadintel-token" content="__LEADINTEL_TOKEN__">
+<title>LeadIntel</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<link rel="stylesheet" href="/assets/app.css?v=__ASSET_VERSION__">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="logo" aria-hidden="true">◆</span> LeadIntel</div>
+  <label class="search"><span class="sr">Search businesses by name</span>
+    <input id="q" type="search" placeholder="Search businesses…  ( / )" autocomplete="off"></label>
+  <div class="counts" id="counts" aria-live="polite"></div>
+  <div class="areachip" id="areachip" hidden><span class="dot" aria-hidden="true"></span><span id="areachip-text"></span>
+    <button type="button" id="areachip-x" class="x" title="Remove the search area" aria-label="Remove the search area">✕</button></div>
+  <div class="actions">
+    <button id="sales" class="btn" hidden title="Your pipeline, follow-ups and recent activity">Sales</button>
+    <button id="saved-btn" class="btn" hidden title="Save this search or open a saved one">Saved searches</button>
+    <button id="profile-btn" class="btn icon" hidden title="Your salesperson profile" aria-label="Your salesperson profile">👤</button>
+    <select id="view" aria-label="Layout">
+      <option value="split">List + map</option><option value="list">List only</option><option value="map">Map only</option>
+    </select>
+    <button id="export" class="btn" title="Download the businesses matching these filters as a CSV file">Export CSV</button>
+    <select id="theme" aria-label="Colour theme">
+      <option value="system">Theme: system</option><option value="light">Theme: light</option><option value="dark">Theme: dark</option>
+    </select>
+    <button id="fullscreen" class="btn icon" title="Full screen (F11 or Esc to leave)" aria-label="Full screen">⛶</button>
+  </div>
+</header>
+<div class="banner" id="coverage" role="status">Loading…</div>
+<div class="layout" id="layout" data-view="split">
+  <aside class="filters" id="filters" aria-label="Filters">
+    <div class="filters-head"><h2>Filters</h2><button id="clear" class="link">Clear all</button></div>
+    <div class="fgroup"><h3>Sort by</h3>
+      <select id="sort"><option value="lps">Lead priority (LPS)</option><option value="bos">Business opportunity (BOS)</option><option value="name">Name</option><option value="follow_up" data-crm hidden>Follow-up date</option><option value="distance" data-area hidden>Distance from center</option></select></div>
+    <div class="fgroup" id="g-area"><h3>Search area</h3>
+      <div class="area-find">
+        <input id="area-find" type="search" maxlength="200" autocomplete="off" placeholder="Address, ZIP, city or business"
+          aria-label="Find a center for the search area" aria-controls="area-results" title="Type to search; press Enter to look up a street address">
+        <div id="area-results" class="area-results" role="listbox" aria-label="Places found" hidden></div></div>
+      <div id="area-off">
+        <button type="button" class="btn" id="area-on">Search around a point</button>
+        <p class="hint">Limits every result to a circle (10 miles to start). Move it by dragging its center on the map.</p></div>
+      <div id="area-panel" hidden>
+        <p class="area-label" id="area-label"></p>
+        <div class="area-actions">
+          <button type="button" class="btn" id="area-pick" aria-pressed="false" title="Then click the map where the center should be">Pick on map</button>
+          <button type="button" class="btn" id="area-here" title="Center the area on the business you have open">Selected business</button></div>
+        <label class="row" for="area-num">Radius
+          <span class="area-radius"><input id="area-num" type="number" step="any" inputmode="decimal" aria-label="Radius">
+            <select id="area-unit" aria-label="Radius unit"><option value="mi">mi</option><option value="km">km</option></select></span></label>
+        <input id="area-slider" class="area-slider" type="range" min="0" max="1000" step="1" aria-label="Radius">
+        <p class="hint" id="area-limits"></p>
+        <p class="area-count" id="area-count" aria-live="polite"></p>
+        <p class="hint area-note" id="area-note"></p>
+        <button type="button" class="link" id="area-remove">Remove search area</button></div></div>
+    <div class="fgroup" id="g-sales" hidden><h3>Sales</h3>
+      <label class="row">Claimed <select id="claim"><option value="">Anyone</option><option value="mine">By me</option><option value="unclaimed">Not claimed</option><option value="others">By others</option><option value="claimed">By anyone</option></select></label>
+      <label class="row">Follow-up <select id="follow_up"><option value="">Any time</option><option value="overdue">Overdue</option><option value="today">Today</option><option value="week">Next 7 days</option><option value="any">Has a date</option><option value="none">No date</option></select></label>
+      <label class="row">List <select id="list_id"><option value="">Any</option></select></label>
+      <div class="chips" data-key="sales" id="f-sales"></div></div>
+    <div class="fgroup"><h3>County</h3><div class="chips" data-key="county" id="f-county"></div></div>
+    <div class="fgroup"><h3>Niche</h3><div class="chips" data-key="niche" id="f-niche"></div></div>
+    <div class="fgroup"><h3>Qualification</h3><div class="chips" data-key="qualification" id="f-qualification"></div></div>
+    <div class="fgroup"><h3>Website</h3><div class="chips" data-key="website" id="f-website"></div>
+      <p class="hint">"No website recorded" means none in the sources checked so far; the website search has not run yet.</p></div>
+    <div class="fgroup"><h3>Operating status</h3><div class="chips" data-key="operating" id="f-operating"></div></div>
+    <div class="fgroup"><h3>Contact listed</h3>
+      <label class="row">Phone <select id="phone"><option value="">Any</option><option value="true">Listed</option><option value="false">None listed</option></select></label>
+      <label class="row">Email <select id="email"><option value="">Any</option><option value="true">Listed</option><option value="false">None listed</option></select></label>
+      <p class="hint">Listed in a source, not verified.</p></div>
+    <div class="fgroup"><h3>Minimum scores</h3>
+      <label class="row">LPS ≥ <input id="lps_min" type="number" min="0" max="100" step="5" inputmode="numeric"></label>
+      <label class="row">BOS ≥ <input id="bos_min" type="number" min="0" max="100" step="5" inputmode="numeric"></label></div>
+  </aside>
+  <section class="results" aria-label="Prospects">
+    <div id="list" class="list" role="listbox" aria-label="Prospect list" tabindex="-1"></div>
+    <nav class="pager" aria-label="Pages"><button id="prev" class="btn">‹ Previous</button><span id="pageinfo"></span><button id="next" class="btn">Next ›</button></nav>
+  </section>
+  <section class="mapwrap" aria-label="Map">
+    <div id="map"></div>
+    <div class="mapcaption" id="mapcaption" aria-live="polite"></div>
+  </section>
+  <aside class="detail" id="detail" aria-label="Business details" tabindex="-1">
+    <p class="muted pad">Select a business to see its details.</p>
+  </aside>
+</div>
+<dialog id="profile" aria-labelledby="profile-title">
+  <form method="dialog" id="profile-form">
+    <h2 id="profile-title">Your salesperson profile</h2>
+    <p class="muted">Shown on the businesses you claim and in the activity history. Stored only in your LeadIntel database.</p>
+    <label class="field">Your name <input name="display_name" required maxlength="120" autocomplete="name"></label>
+    <label class="field">Initials <input name="initials" required maxlength="4" autocomplete="off"></label>
+    <label class="field">Email (optional) <input name="email" type="email" maxlength="254" autocomplete="email"></label>
+    <p class="hint" id="write-mode"></p>
+    <div class="dlg-actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary" value="save">Save</button></div>
+  </form>
+</dialog>
+<dialog id="dash" aria-labelledby="dash-title" class="wide">
+  <div class="dlg-head"><h2 id="dash-title">Sales</h2><button type="button" class="btn icon" data-close aria-label="Close">✕</button></div>
+  <div id="dash-body"><p class="muted">Loading…</p></div>
+</dialog>
+<dialog id="audit" aria-labelledby="audit-title" class="wide">
+  <div class="dlg-head"><h2 id="audit-title">Website audit</h2><button type="button" class="btn icon" data-close aria-label="Close">✕</button></div>
+  <div id="audit-body"><p class="muted">Loading…</p></div>
+</dialog>
+<dialog id="saved" aria-labelledby="saved-title">
+  <div class="dlg-head"><h2 id="saved-title">Saved searches</h2><button type="button" class="btn icon" data-close aria-label="Close">✕</button></div>
+  <div id="saved-body"><p class="muted">Loading…</p></div>
+</dialog>
+<script nonce="__LEADINTEL_NONCE__" src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script nonce="__LEADINTEL_NONCE__" src="/assets/app.js?v=__ASSET_VERSION__"></script>
+</body>
+</html>

@@ -11,7 +11,7 @@ Evidence levels used below:
 - **Data**: validated against real records.
 - **Unverified**: not yet confirmed.
 
-> Credentials are never committed or logged. The public username and password appear on the official Data Downloads page. LeadIntel reads them only from `SUNBIZ_SFTP_USER` / `SUNBIZ_SFTP_PASSWORD`.
+> The public username and password appear on the official Data Downloads page. LeadIntel reads them only from `SUNBIZ_SFTP_USER` / `SUNBIZ_SFTP_PASSWORD` and never logs them. Private credentials are never committed; the one exception, decided by the project owner on 2026-11-05, is this publicly published login, which the Windows Friend Edition ships in `packaging/windows/sunbiz-public-login.json` so salespeople never have to enter it (a login saved with `setup.ps1 -SunbizLogin` overrides it).
 
 ## 1. Host, port and protocol
 

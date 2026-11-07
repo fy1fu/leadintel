@@ -9,6 +9,10 @@ Status: **v0.3 (2026-11-03).** The v0.2 free-first architecture below remains in
 
 v0.2 superseded v0.1, which assumed Google Places, Google Maps and paid search APIs.
 
+**v0.4 additions (2026-11-06):** the next-generation product vision and the **Search Area** (adjustable radius)
+feature are in §14. They add to v0.3 and change none of its decisions. Delivery status:
+[DELIVERY_STATUS.md](DELIVERY_STATUS.md); M3 design detail: [research/M3_PREP.md](research/M3_PREP.md).
+
 **Guiding constraint:** the application must be fully useful with **zero recurring charges and no paid API dependencies**.
 - Paid integrations exist only as disabled-by-default adapters that a configuration change can enable later.
 - Accuracy beats volume: fewer, well-verified leads are preferred over many mediocre ones.
@@ -317,6 +321,8 @@ docs/           PLAN.md  data-sources.md  scoring.md
 - A `make tiles` target extracts a regional PMTiles file (e.g. Florida) for fully self-hosted, offline-capable tiles.
 - Clustering uses Supercluster, so 50k+ points stay responsive.
 - Drawing (polygon/rectangle/circle for custom areas) uses Terra Draw.
+  - *2026-11-06:* the adjustable **circle** is delivered first as the Search Area (§14.2), drawn from the database's
+    own geodesic buffer, with no drawing library. Polygon and rectangle drawing stay a later option.
 - The map and results list stay synchronized through a shared selection store.
 - The `MapView` interface allows a Google Maps implementation later. It is not built now.
 
@@ -412,3 +418,98 @@ Implemented ahead of Phase 1. Full details: [NETWORK.md](NETWORK.md).
    - `extensions.duckdb.org` (optional)
 
    Without them, those adapters are built against official file layouts and verified when run on your machine.
+
+---
+
+## 14. Next-generation product vision and Search Area (v0.4, 2026-11-06)
+
+This section adds to the plan above. All earlier decisions stand:
+- free-first, with paid adapters off by default;
+- accuracy over volume;
+- WQS, BOS and LPS kept separate (SCORING.md);
+- unknown is not poor;
+- provenance on every fact;
+- the B0 maintenance lock for business writes.
+
+### 14.1 Vision: one cohesive prospecting platform
+
+The salesperson's loop is:
+1. **choose an area**;
+2. **find the best businesses in it**;
+3. **filter and rank** them;
+4. **inspect their websites**;
+5. **understand the opportunity**;
+6. **manage the sales activity**.
+
+All of it happens in one window, and every part of LeadIntel agrees on which businesses match. The mechanism already
+exists and is the rule for every new capability: one shared `ProspectFilter` (M1 S2a). It builds the list, the
+paging, the counts and summaries, the map points, the CSV export and the sales filters from the same WHERE clause and
+the same bound parameters.
+
+Every new constraint must be added there, and never as a separate search mode or client-side filtering. This covers
+area, WQS, revenue and any future one. A constraint never silently overrides another: all constraints combine with
+AND, and each active one is visible in the interface.
+
+Delivered so far: M1 (salesperson interface) and M2 (local CRM with a database-restricted write path). Next: M3, with
+the **Search Area** first, then website intelligence and WQS (§6 above, research/M3_PREP.md).
+
+### 14.2 Search Area: an adjustable radius (core prospecting feature)
+
+**Behaviour**
+- **Off until you turn it on.** Without an area, LeadIntel behaves exactly as today.
+- **Turning it on** places a 10-mile circle (16.09 km) at the chosen center. Both the center and the radius can then
+  be adjusted.
+- **Center:**
+  - address, ZIP code, city or business search;
+  - a map click while **Edit area** is on, or **Search around here**;
+  - dragging the center marker.
+
+  Dragging the marker changes the center. Ordinary panning and zooming **never** do.
+- **Radius:** a slider plus an editable number field, in miles or kilometres. Limits 0.25–100 mi (0.4–160 km).
+  Switching units converts the display only: the stored radius is in metres, so the results do not change.
+- **On screen:**
+  - the circle and its center marker;
+  - a visible "area active" chip with the radius, the label and the matching count, with ✕ to clear it;
+  - a count of matching businesses excluded for lack of coordinates.
+- **Persistence:** the area is part of the URL state. It stays active while inspecting a business, switching
+  list / map / split, changing other filters, or reloading. **Clear all** and ✕ remove it.
+
+**Server**
+- **Distance test:** three bound parameters (center latitude, center longitude, radius in metres) in the shared
+  `ProspectFilter`. It uses an index-backed bounding-box prefilter on the existing GiST index (`idx_location_geom`),
+  then the exact geodesic test `ST_DWithin(geography)` on the WGS84 spheroid. The boundary is **inclusive**.
+- **No migration** is needed: it uses the existing `location.geom`. A later migration happens only if the
+  implementation proves one necessary.
+- **The circle shown is the circle searched:** the map draws the database's own geodesic buffer
+  (`ST_Buffer(geography)`) as longitude/latitude GeoJSON. The map projects it like every other feature, so it marks
+  the same ground boundary at every zoom level. During a drag, a local approximation is shown briefly, then replaced.
+- **Coordinates:**
+  - businesses without coordinates are never inside an area, and their number is shown;
+  - coordinates that come only from a ZIP-centroid geocode are kept but labelled **approximate location**, with a
+    "precise locations only" option.
+- **Combining:** area AND county AND industry AND website status AND WQS AND BOS AND LPS AND revenue AND contact AND
+  sales status / ownership / follow-up / list. WQS and revenue are added when M3 provides them. No filter widens or
+  replaces another.
+- **Same answer everywhere:** the list (with distance and a distance sort), counts, summary, map points (all matches,
+  not just the viewport), CSV export (with distance) and sales filters use the area.
+
+**Saved searches.** Storing a named search (all filters, including center, radius and unit) needs a table. It is
+designed separately and planned with the M3 schema (0007). The Search Area itself does not wait for it.
+
+**Out of scope for now:** drawing polygons or rectangles (§9.3).
+
+### 14.3 Search Area acceptance tests (before implementation)
+
+All run on `leadintel_test` with synthetic data only. Full list: research/M3_PREP.md §7.5.
+
+| Area | Test |
+|---|---|
+| Boundary inclusion | Points at radius − 1 m and exactly at the radius are inside, radius + 1 m is outside, at several bearings and latitudes; results match an independent ellipsoidal computation. |
+| Unit conversion | The same radius in miles and kilometres gives identical results; switching units never changes counts; the displayed value round-trips. |
+| Center movement | Dragging the marker updates the center once, on release; panning and zooming never change the center or the counts. |
+| Consistency | List total and pages, count, summary, map points and CSV rows agree with each other and with an independent model, with no gaps or duplicates across pages. |
+| URL persistence | The area survives inspecting a business, view switches, filter changes and reloads; ✕ and **Clear all** remove it. |
+| Missing coordinates | Never inside an area, always counted; approximate locations flagged; "precise only" excludes exactly those. |
+| Combined filters | The area with each other filter is exactly the intersection; area with county never widens the county; clearing the area restores the previous result exactly. |
+| Validation and security | Partial, non-finite or out-of-range parameters return 422 and never reach SQL; center lookups go only through safe egress. |
+| Map accuracy | The circle's vertices lie at radius ± 0.1 % from the center; the label and the circle come from the same metre value. |

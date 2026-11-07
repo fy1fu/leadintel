@@ -56,6 +56,10 @@ class InfraClient:
     def head(self, url: str, **kw) -> httpx.Response:
         return self._request("HEAD", url, **kw)
 
+    def request(self, method: str, url: str, **kw) -> httpx.Response:
+        """Any method (e.g. WebDAV PROPFIND); same host/paid-provider checks on every hop."""
+        return self._request(method, url, **kw)
+
     def stream(self, method: str, url: str, **kw):
         return self._client.stream(method, url, **kw)
 

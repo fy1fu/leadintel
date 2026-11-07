@@ -1,0 +1,22 @@
+# Keyword groups (SCORING.md §2). Effects are BOS points combined into the bounded adjustment T.
+version: 1
+match: {mode: token_phrase, case_insensitive: true, variants: positive_only}
+groups:
+  pressure_washing: {weight: 12, phrases: ["pressure wash", "power wash", "soft wash", "pressure washing"]}
+  lawn_landscaping: {weight: 10, phrases: ["lawn", "landscaping", "landscape", "irrigation", "tree service", "sod"]}
+  cleaning:         {weight: 10, phrases: ["cleaning", "maid", "janitorial", "carpet cleaning", "upholstery cleaning", "window cleaning", "gutter cleaning"]}
+  handyman_repair:  {weight: 10, phrases: ["handyman", "home repair", "remodeling", "flooring", "paint", "painting", "fence", "fencing"]}
+  junk_moving:      {weight: 9,  phrases: ["junk", "hauling", "moving"]}
+  pest:             {weight: 9,  phrases: ["pest", "termite", "exterminat*"]}
+  trades:           {weight: 9,  phrases: ["roof", "roofing", "hvac", "plumbing", "electrical", "appliance repair", "welding", "septic"]}
+  pool:             {weight: 9,  phrases: ["pool cleaning", "pool maintenance", "pool service"]}
+  mobile_auto:      {weight: 10, phrases: ["detail", "mobile detail*", "auto detailing", "car wash", "window tint*", "tint", "mobile mechanic", "auto repair"]}
+  marine:           {weight: 10, phrases: ["marine", "boat", "boat repair", "boat maintenance", "boat detailing", "charter", "fishing", "fishing charter", "dock construction"]}
+  generic_mobile:   {weight: 4,  phrases: ["mobile"], requires_other_group: true}
+negative:
+  holding:    {penalty: -15, phrases: ["holdings", "holding company"]}
+  investment: {penalty: -12, phrases: ["investments", "capital", "ventures", "equities"], neutralized_by_any_positive_group: true}
+  realty:     {penalty: -6,  phrases: ["realty"]}
+  trust:      {penalty: -10, phrases: ["trust"], neutralized_by_any_positive_group: true}
+  properties: {penalty: -8,  phrases: ["properties"], neutralized_by: ["maintenance", "cleaning", "lawn", "landscaping", "management", "services"]}
+hard_exclude: []

@@ -1,18 +1,50 @@
 """FastAPI application (network diagnostics endpoints for now)."""
 from __future__ import annotations
 
+import hashlib
 import html
 
 from fastapi import FastAPI, Query
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from app.api.security import (ALLOWED_HOSTS, NONCE_PLACEHOLDER, TOKEN_PLACEHOLDER, LocalRequestGuard, csp, new_token,
+                              render_page)
 from app.net.service import NetContext, build_context
 
 
-def create_app(ctx: NetContext | None = None) -> FastAPI:
-    app = FastAPI(title="LeadIntel", version="0.2.0")
+def create_app(ctx: NetContext | None = None, *, token: str | None = None) -> FastAPI:
+    """token: the per-launch token for unsafe requests; generated here unless a test supplies one."""
+    app = FastAPI(title="LeadIntel", version="0.3.0")
     app.state.net = ctx or build_context()
+    app.state.token = token or new_token()       # memory only: never logged, written to disk or put in a URL
+    from pathlib import Path
+
+    from app.api.business import router as business_router
+    from app.api.crm import router as crm_router
+    from app.api.audit import router as audit_router
+    app.include_router(business_router)
+    app.include_router(crm_router)
+    app.include_router(audit_router)
+    static = Path(__file__).parent / "static"
+    index = static / "index.html"
+    # Interface assets (CSS/JS). Their URLs carry a content hash, so an update never leaves a stale cached copy.
+    assets = static / "assets"
+    asset_version = hashlib.sha256(b"".join(p.read_bytes() for p in sorted(assets.glob("*")) if p.is_file())).hexdigest()[:12]
+    app.mount("/assets", StaticFiles(directory=assets), name="assets")
+    # Middleware added last runs first: Host validation, then the unsafe-request guard.
+    app.add_middleware(LocalRequestGuard, token=app.state.token)
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
+
+    def page(html: str) -> HTMLResponse:
+        body, nonce = render_page(html.replace("__ASSET_VERSION__", asset_version), app.state.token)
+        return HTMLResponse(body, headers={"Content-Security-Policy": csp(nonce)})
+
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    def home() -> HTMLResponse:
+        return page(index.read_text(encoding="utf-8"))
 
     @app.get("/api/health")
     def health() -> dict:
@@ -30,8 +62,8 @@ def create_app(ctx: NetContext | None = None) -> FastAPI:
         return {"run_id": run_id, **d.full_report()}
 
     @app.get("/diagnostics/network", response_class=HTMLResponse)
-    def diagnostics_page() -> str:
-        return render_html(app.state.net.diagnostics.full_report())
+    def diagnostics_page() -> HTMLResponse:
+        return page(render_html(app.state.net.diagnostics.full_report()))
 
     return app
 
@@ -75,7 +107,7 @@ def render_html(report: dict) -> str:
     nr_rows = "".join(f"<tr><td><code>{e(n['host'])}</code></td><td>{e(n['reason'])}</td></tr>"
                       for n in report["not_required"])
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>Network diagnostics · LeadIntel</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="leadintel-token" content="{TOKEN_PLACEHOLDER}"><title>Network diagnostics · LeadIntel</title>
 <style>
 :root{{--bg:#f7f7f5;--fg:#1c1c1a;--muted:#6b6b66;--card:#fff;--line:#e3e2dd;--ok:#1e7a46;--warn:#9a6700;--bad:#b42318}}
 @media (prefers-color-scheme:dark){{:root{{--bg:#151514;--fg:#ececea;--muted:#a3a39e;--card:#1e1e1c;--line:#33332f;--ok:#4cc38a;--warn:#e2b340;--bad:#ff6b5e}}}}
@@ -91,8 +123,19 @@ th{{font-size:12px;color:var(--muted);font-weight:600}} code{{font-size:12px}}
 <h1>Network diagnostics</h1>
 <div class="sub">Generated {e(report['generated_at'])} · latest run {e(report['latest_run_id'] or 'none yet')} ·
 egress proxy {'in use' if report['egress']['proxy'] else 'not used'}. A service is only shown as operational after a real request succeeded.</div>
-<form method="post" action="/api/network/diagnostics/run" onsubmit="event.preventDefault();this.querySelector('button').disabled=true;fetch(this.action,{{method:'POST'}}).then(()=>location.reload())">
-<button type="submit">Run diagnostics now</button></form>
+<form id="run-diagnostics"><button type="submit">Run diagnostics now</button> <span class="sub" id="run-msg"></span></form>
+<script nonce="{NONCE_PLACEHOLDER}">
+const tok = document.querySelector('meta[name="leadintel-token"]').content;
+document.getElementById("run-diagnostics").addEventListener("submit", async ev => {{
+  ev.preventDefault();
+  const button = ev.target.querySelector("button"); button.disabled = true;
+  const r = await fetch("/api/network/diagnostics/run", {{method: "POST", headers: {{"X-LeadIntel-Token": tok}}}});
+  if (r.ok) {{ location.reload(); return; }}
+  if (r.status === 403 && !location.search.includes("reloaded=1")) {{ location.replace(location.pathname + "?reloaded=1"); return; }}
+  document.getElementById("run-msg").textContent = "Could not run diagnostics (" + r.status + "). Reload the page and try again.";
+  button.disabled = false;
+}});
+</script>
 <h2>Capabilities</h2><div class="wrap"><table><thead><tr><th>Capability</th><th>Need</th><th>Status</th><th>Active service</th></tr></thead><tbody>{cap_rows}</tbody></table></div>
 <h2>Services</h2><div class="wrap"><table><thead><tr><th>Service</th><th>Host</th><th>Need</th><th>Status</th><th>Network allowed</th><th>Last checked</th><th>Last successful download</th><th>Errors</th></tr></thead><tbody>{''.join(svc_rows)}</tbody></table></div>
 <h2>Paid providers</h2><div class="sub">Blocked by the cost guard unless explicitly enabled with a budget. Paid requests made: {len(report['paid_requests_made'])}.</div>
